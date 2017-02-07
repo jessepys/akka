@@ -25,6 +25,7 @@ import scala.collection.immutable.TreeMap
 import akka.cluster.UniqueAddress
 import java.io.NotSerializableException
 import akka.cluster.ddata.protobuf.msg.ReplicatorMessages.OtherMessage
+import akka.cluster.ddata.ORSet.NotDeltaOp
 
 private object ReplicatedDataSerializer {
   /*
@@ -356,6 +357,12 @@ class ReplicatedDataSerializer(val system: ExtendedActorSystem)
       addDots(otherElements)
     }
 
+    orset.deltaOp match {
+      case ORSet.NotDeltaOp    ⇒ // optional, unset
+      case ORSet.AddDeltaOp    ⇒ b.setDeltaOp(rd.ORSetDeltaOp.Add)
+      case ORSet.RemoveDeltaOp ⇒ b.setDeltaOp(rd.ORSetDeltaOp.Remove)
+    }
+
     b.build()
   }
 
@@ -372,7 +379,14 @@ class ReplicatedDataSerializer(val system: ExtendedActorSystem)
     val dots = orset.getDotsList.asScala.map(versionVectorFromProto).iterator
     val elementsMap = elements.zip(dots).toMap
 
-    new ORSet(elementsMap, vvector = versionVectorFromProto(orset.getVvector))
+    val deltaOp =
+      if (orset.hasDeltaOp) {
+        if (orset.getDeltaOp == rd.ORSetDeltaOp.Add) ORSet.AddDeltaOp
+        else if (orset.getDeltaOp == rd.ORSetDeltaOp.Remove) ORSet.RemoveDeltaOp
+        else ORSet.NotDeltaOp
+      } else ORSet.NotDeltaOp
+
+    new ORSet(elementsMap, vvector = versionVectorFromProto(orset.getVvector), deltaOp = deltaOp)
   }
 
   def flagToProto(flag: Flag): rd.Flag =
@@ -430,31 +444,6 @@ class ReplicatedDataSerializer(val system: ExtendedActorSystem)
     new PNCounter(
       increments = gcounterFromProto(pncounter.getIncrements),
       decrements = gcounterFromProto(pncounter.getDecrements))
-  }
-
-  def versionVectorToProto(versionVector: VersionVector): rd.VersionVector = {
-    val b = rd.VersionVector.newBuilder()
-    versionVector.versionsIterator.foreach {
-      case (node, value) ⇒ b.addEntries(rd.VersionVector.Entry.newBuilder().
-        setNode(uniqueAddressToProto(node)).setVersion(value))
-    }
-    b.build()
-  }
-
-  def versionVectorFromBinary(bytes: Array[Byte]): VersionVector =
-    versionVectorFromProto(rd.VersionVector.parseFrom(bytes))
-
-  def versionVectorFromProto(versionVector: rd.VersionVector): VersionVector = {
-    val entries = versionVector.getEntriesList
-    if (entries.isEmpty)
-      VersionVector.empty
-    else if (entries.size == 1)
-      VersionVector(uniqueAddressFromProto(entries.get(0).getNode), entries.get(0).getVersion)
-    else {
-      val versions: TreeMap[UniqueAddress, Long] = versionVector.getEntriesList.asScala.map(entry ⇒
-        uniqueAddressFromProto(entry.getNode) → entry.getVersion)(breakOut)
-      VersionVector(versions)
-    }
   }
 
   /*

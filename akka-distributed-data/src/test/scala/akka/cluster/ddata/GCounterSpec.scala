@@ -31,8 +31,11 @@ class GCounterSpec extends WordSpec with Matchers {
       c6.state(node2) should be(3)
 
       c2.delta.state(node1) should be(1)
+      c1.merge(c2.delta) should be(c2)
       c3.delta.state(node1) should be(2)
+      c2.merge(c3.delta) should be(c3)
       c6.delta.state(node2) should be(3)
+      c5.merge(c6.delta) should be(c6)
     }
 
     "be able to increment each node's record by arbitrary delta" in {

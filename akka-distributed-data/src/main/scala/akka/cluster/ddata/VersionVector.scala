@@ -338,7 +338,9 @@ final case class ManyVersionVector(versions: TreeMap[UniqueAddress, Long]) exten
     versions.iterator
 
   override def merge(that: VersionVector): VersionVector = {
-    that match {
+    if (that.isEmpty) this
+    else if (this.isEmpty) that
+    else that match {
       case ManyVersionVector(vs2) ⇒
         var mergedVersions = vs2
         for ((node, time) ← versions) {

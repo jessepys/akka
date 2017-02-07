@@ -77,6 +77,11 @@ trait DeltaReplicatedData extends ReplicatedData {
 }
 
 /**
+ * Marker that specifies that the deltas must be applied in causal order.
+ */
+trait RequiresCausalDeliveryOfDeltas extends DeltaReplicatedData
+
+/**
  * Java API: Interface for implementing a [[ReplicatedData]] in Java.
  *
  * The type parameter `D` is a self-recursive type to be defined by the

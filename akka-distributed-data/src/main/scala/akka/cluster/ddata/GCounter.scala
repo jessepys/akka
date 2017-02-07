@@ -87,10 +87,10 @@ final class GCounter private[akka] (
         case None    ⇒ n
       }
       val newDelta = _delta match {
-        case Some(d) ⇒ Some(new GCounter(d.state + (key → nextValue)))
-        case None    ⇒ Some(new GCounter(Map(key → nextValue)))
+        case None    ⇒ new GCounter(Map(key → nextValue))
+        case Some(d) ⇒ new GCounter(d.state + (key → nextValue))
       }
-      assignAncestor(new GCounter(state + (key → nextValue), newDelta))
+      assignAncestor(new GCounter(state + (key → nextValue), Some(newDelta)))
     }
   }
 

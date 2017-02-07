@@ -14,17 +14,17 @@ import org.scalatest.WordSpec
 
 class ORSetSpec extends WordSpec with Matchers {
 
-  val node1 = UniqueAddress(Address("akka.tcp", "Sys", "localhost", 2551), 1)
-  val node2 = UniqueAddress(node1.address.copy(port = Some(2552)), 2)
+  val node1 = UniqueAddress(Address("akka.tcp", "Sys", "localhost", 2551), 1L)
+  val node2 = UniqueAddress(node1.address.copy(port = Some(2552)), 2L)
 
-  val nodeA = UniqueAddress(Address("akka.tcp", "Sys", "a", 2552), 1)
-  val nodeB = UniqueAddress(nodeA.address.copy(host = Some("b")), 2)
-  val nodeC = UniqueAddress(nodeA.address.copy(host = Some("c")), 3)
-  val nodeD = UniqueAddress(nodeA.address.copy(host = Some("d")), 4)
-  val nodeE = UniqueAddress(nodeA.address.copy(host = Some("e")), 5)
-  val nodeF = UniqueAddress(nodeA.address.copy(host = Some("f")), 6)
-  val nodeG = UniqueAddress(nodeA.address.copy(host = Some("g")), 7)
-  val nodeH = UniqueAddress(nodeA.address.copy(host = Some("h")), 8)
+  val nodeA = UniqueAddress(Address("akka.tcp", "Sys", "a", 2552), 1L)
+  val nodeB = UniqueAddress(nodeA.address.copy(host = Some("b")), 2L)
+  val nodeC = UniqueAddress(nodeA.address.copy(host = Some("c")), 3L)
+  val nodeD = UniqueAddress(nodeA.address.copy(host = Some("d")), 4L)
+  val nodeE = UniqueAddress(nodeA.address.copy(host = Some("e")), 5L)
+  val nodeF = UniqueAddress(nodeA.address.copy(host = Some("f")), 6L)
+  val nodeG = UniqueAddress(nodeA.address.copy(host = Some("g")), 7L)
+  val nodeH = UniqueAddress(nodeA.address.copy(host = Some("h")), 8L)
 
   val user1 = """{"username":"john","password":"coltrane"}"""
   val user2 = """{"username":"sonny","password":"rollins"}"""
@@ -222,6 +222,106 @@ class ORSetSpec extends WordSpec with Matchers {
       merged4.elements should contain(user1)
       merged4.elements should not contain (user2)
       merged4.elements should contain(user3)
+    }
+
+  }
+
+  "ORSet deltas" must {
+    "work for additions" in {
+      val s1 = ORSet.empty[String]
+      val s2 = s1.add(node1, "a")
+      s2.delta.elements should ===(Set("a"))
+      s1.merge(s2.delta) should ===(s2)
+
+      val s3 = s2.resetDelta.add(node1, "b").add(node1, "c")
+      s3.delta.elements should ===(Set("b", "c"))
+      s2.merge(s3.delta) should ===(s3)
+
+      // another node adds "d"
+      val s4 = s3.resetDelta.add(node2, "d")
+      s4.delta.elements should ===(Set("d"))
+      s3.merge(s4.delta) should ===(s4)
+
+      // concurrent update
+      val s5 = s3.resetDelta.add(node1, "e")
+      val s6 = s5.merge(s4)
+      s5.merge(s4.delta) should ===(s6)
+
+      // concurrent add of same element
+      val s7 = s3.resetDelta.add(node1, "d")
+      val s8 = s7.merge(s4)
+      // the dot contains both nodes
+      s8.elementsMap("d").contains(node1)
+      s8.elementsMap("d").contains(node2)
+      // and same result when merging the deltas
+      s7.merge(s4.delta) should ===(s8)
+      s4.merge(s7.delta) should ===(s8)
+    }
+
+    "handle another concurrent add scenario" in {
+      val s1 = ORSet.empty[String]
+      val s2 = s1.add(node1, "a")
+      val s3 = s2.add(node1, "b")
+      val s4 = s2.add(node2, "c")
+
+      // full state merge for reference
+      val s5 = s4.merge(s3)
+      s5.elements should ===(Set("a", "b", "c"))
+
+      val s6 = s4.merge(s3.delta)
+      s6.elements should ===(Set("a", "b", "c"))
+    }
+
+    // FIXME test merge of the deltas themselves
+
+    "work for removals" in {
+      val s1 = ORSet.empty[String]
+      val s2 = s1.add(node1, "a").add(node1, "b").resetDelta
+      val s3 = s2.remove(node1, "b")
+      s2.merge(s3) should ===(s3)
+      s2.merge(s3.delta) should ===(s3)
+      s2.merge(s3.delta).elements should ===(Set("a"))
+
+      // concurrent update
+      val s4 = s2.add(node2, "c").resetDelta
+      val s5 = s4.merge(s3)
+      s5.elements should ===(Set("a", "c"))
+      s4.merge(s3.delta) should ===(s5)
+
+      // add "b" again
+      val s6 = s5.add(node2, "b")
+      // merging the old delta should not remove it
+      s6.merge(s3.delta) should ===(s6)
+      s6.merge(s3.delta).elements should ===(Set("a", "b", "c"))
+    }
+
+    "require causal delivery of deltas" in {
+      // This test illustrates why we need causal delivery of deltas.
+      // Otherwise the following could happen.
+
+      // s0 is the stable state that is initially replicated to all nodes
+      val s0 = ORSet.empty[String].add(node1, "a")
+
+      // add element "b" and "c" at node1
+      val s11 = s0.resetDelta.add(node1, "b")
+      val s12 = s11.resetDelta.add(node1, "c")
+
+      // at the same time, add element "d" at node2
+      val s21 = s0.resetDelta.add(node2, "d")
+
+      // node3 receives delta for "d" and "c", but the delta for "b" is lost
+      val s31 = s0 merge s21.delta merge s12.delta
+      s31.elements should ===(Set("a", "c", "d"))
+
+      // node4 receives all deltas
+      val s41 = s0 merge s11.delta merge s12.delta merge s21.delta
+      s41.elements should ===(Set("a", "b", "c", "d"))
+
+      // node3 and node4 sync with full state gossip
+      val s32 = s31 merge s41
+      // one would expect elements "a", "b", "c", "d", but "b" is removed
+      // because we applied s12.delta without applying s11.delta
+      s32.elements should ===(Set("a", "c", "d"))
     }
 
   }

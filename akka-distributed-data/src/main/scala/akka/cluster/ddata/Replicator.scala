@@ -603,11 +603,16 @@ object Replicator {
      * The `DataEnvelope` wraps a data entry and carries state of the pruning process for the entry.
      */
     final case class DataEnvelope(
-      data:    ReplicatedData,
-      pruning: Map[UniqueAddress, PruningState] = Map.empty)
+      data:          ReplicatedData,
+      pruning:       Map[UniqueAddress, PruningState] = Map.empty,
+      deltaVersions: VersionVector                    = VersionVector.empty)
       extends ReplicatorMessage {
 
       import PruningState._
+
+      def withoutDeltaVersions: DataEnvelope =
+        if (deltaVersions.isEmpty) this
+        else copy(deltaVersions = VersionVector.empty)
 
       def needPruningFrom(removedNode: UniqueAddress): Boolean =
         data match {
@@ -660,12 +665,17 @@ object Replicator {
           }
 
           // cleanup both sides before merging, `merge((otherData: ReplicatedData)` will cleanup other.data
-          copy(data = cleaned(data, filteredMergedPruning), pruning = filteredMergedPruning).merge(other.data)
+          // FIXME cleanup the deltaVersions also
+          copy(
+            data = cleaned(data, filteredMergedPruning),
+            deltaVersions = deltaVersions.merge(other.deltaVersions),
+            pruning = filteredMergedPruning).merge(other.data)
         }
 
       def merge(otherData: ReplicatedData): DataEnvelope =
         if (otherData == DeletedData) DeletedEnvelope
-        else copy(data = data merge cleaned(otherData, pruning).asInstanceOf[data.T])
+        else copy(
+          data = data merge cleaned(otherData, pruning).asInstanceOf[data.T])
 
       private def cleaned(c: ReplicatedData, p: Map[UniqueAddress, PruningState]): ReplicatedData = p.foldLeft(c) {
         case (c: RemovedNodePruning, (removed, _: PruningPerformed)) ⇒
@@ -701,7 +711,8 @@ object Replicator {
     }
     final case class Gossip(updatedData: Map[String, DataEnvelope], sendBack: Boolean) extends ReplicatorMessage
 
-    final case class DeltaPropagation(deltas: Map[String, DataEnvelope]) extends ReplicatorMessage
+    final case class Delta(dataEnvelope: DataEnvelope, fromSeqNr: Long, toSeqNr: Long)
+    final case class DeltaPropagation(fromNode: UniqueAddress, deltas: Map[String, Delta]) extends ReplicatorMessage
 
   }
 }
@@ -940,19 +951,19 @@ final class Replicator(settings: ReplicatorSettings) extends Actor with ActorLog
       context.system.deadLetters // not used
 
   val deltaPropagationSelector = new DeltaPropagationSelector {
-    override val divisor = 5
+    override val gossipIntervalDivisor = 5
     override def allNodes: Vector[Address] = {
       // TODO optimize, by maintaining a sorted instance variable instead
-      nodes.union(weaklyUpNodes).toVector.sorted
+      nodes.union(weaklyUpNodes).diff(unreachable).toVector.sorted
     }
 
-    override def createDeltaPropagation(deltas: Map[String, ReplicatedData]): DeltaPropagation = {
+    override def createDeltaPropagation(deltas: Map[String, (ReplicatedData, Long, Long)]): DeltaPropagation = {
       // Important to include the pruning state in the deltas. For example if the delta is based
       // on an entry that has been pruned but that has not yet been performed on the target node.
-      DeltaPropagation(deltas.map {
-        case (key, d) ⇒ getData(key) match {
-          case Some(envelope) ⇒ key → envelope.copy(data = d)
-          case None           ⇒ key → DataEnvelope(d)
+      DeltaPropagation(selfUniqueAddress, deltas.map {
+        case (key, (d, fromSeqNr, toSeqNr)) ⇒ getData(key) match {
+          case Some(envelope) ⇒ key → Delta(envelope.copy(data = d), fromSeqNr, toSeqNr)
+          case None           ⇒ key → Delta(DataEnvelope(d), fromSeqNr, toSeqNr)
         }
       }(collection.breakOut))
     }
@@ -962,7 +973,7 @@ final class Replicator(settings: ReplicatorSettings) extends Actor with ActorLog
       // Derive the deltaPropagationInterval from the gossipInterval.
       // Normally the delta is propagated to all nodes within the gossip tick, so that
       // full state gossip is not needed.
-      val deltaPropagationInterval = (gossipInterval / deltaPropagationSelector.divisor).max(200.millis)
+      val deltaPropagationInterval = (gossipInterval / deltaPropagationSelector.gossipIntervalDivisor).max(200.millis)
       Some(context.system.scheduler.schedule(deltaPropagationInterval, deltaPropagationInterval,
         self, DeltaPropagationTick))
     } else None
@@ -1108,7 +1119,7 @@ final class Replicator(settings: ReplicatorSettings) extends Actor with ActorLog
     case Read(key)                              ⇒ receiveRead(key)
     case Write(key, envelope)                   ⇒ receiveWrite(key, envelope)
     case ReadRepair(key, envelope)              ⇒ receiveReadRepair(key, envelope)
-    case DeltaPropagation(deltas)               ⇒ receiveDeltaPropagation(deltas)
+    case DeltaPropagation(from, deltas)         ⇒ receiveDeltaPropagation(from, deltas)
     case FlushChanges                           ⇒ receiveFlushChanges()
     case DeltaPropagationTick                   ⇒ receiveDeltaPropagationTick()
     case GossipTick                             ⇒ receiveGossipTick()
@@ -1138,9 +1149,9 @@ final class Replicator(settings: ReplicatorSettings) extends Actor with ActorLog
     log.debug("Received Get for key [{}], local data [{}]", key, localValue)
     if (isLocalGet(consistency)) {
       val reply = localValue match {
-        case Some(DataEnvelope(DeletedData, _)) ⇒ DataDeleted(key, req)
-        case Some(DataEnvelope(data, _))        ⇒ GetSuccess(key, req)(data)
-        case None                               ⇒ NotFound(key, req)
+        case Some(DataEnvelope(DeletedData, _, _)) ⇒ DataDeleted(key, req)
+        case Some(DataEnvelope(data, _, _))        ⇒ GetSuccess(key, req)(data)
+        case None                                  ⇒ NotFound(key, req)
       }
       replyTo ! reply
     } else
@@ -1166,8 +1177,8 @@ final class Replicator(settings: ReplicatorSettings) extends Actor with ActorLog
     val localValue = getData(key.id)
     Try {
       localValue match {
-        case Some(DataEnvelope(DeletedData, _)) ⇒ throw new DataDeleted(key, req)
-        case Some(envelope @ DataEnvelope(existing, _)) ⇒
+        case Some(DataEnvelope(DeletedData, _, _)) ⇒ throw new DataDeleted(key, req)
+        case Some(envelope @ DataEnvelope(existing, _, _)) ⇒
           modify(Some(existing)) match {
             case d: DeltaReplicatedData if deltaCrdtEnabled ⇒
               (envelope.merge(d.resetDelta.asInstanceOf[existing.T]), Some(d.delta))
@@ -1199,8 +1210,9 @@ final class Replicator(settings: ReplicatorSettings) extends Actor with ActorLog
             replyTo ! UpdateSuccess(key, req)
         } else {
           val writeEnvelope = delta match {
-            case Some(d) ⇒ DataEnvelope(d)
-            case None    ⇒ envelope
+            case Some(d: RequiresCausalDeliveryOfDeltas) ⇒ envelope
+            case Some(d)                                 ⇒ DataEnvelope(d)
+            case None                                    ⇒ envelope
           }
           val writeAggregator =
             context.actorOf(WriteAggregator.props(key, writeEnvelope, writeConsistency, req, nodes, unreachable, replyTo, durable)
@@ -1242,8 +1254,8 @@ final class Replicator(settings: ReplicatorSettings) extends Actor with ActorLog
 
   def write(key: String, writeEnvelope: DataEnvelope): Option[DataEnvelope] =
     getData(key) match {
-      case Some(DataEnvelope(DeletedData, _)) ⇒ Some(DeletedEnvelope) // already deleted
-      case Some(envelope @ DataEnvelope(existing, _)) ⇒
+      case Some(DataEnvelope(DeletedData, _, _)) ⇒ Some(DeletedEnvelope) // already deleted
+      case Some(envelope @ DataEnvelope(existing, _, _)) ⇒
         if (existing.getClass == writeEnvelope.data.getClass || writeEnvelope.data == DeletedData) {
           val merged = envelope.merge(writeEnvelope).addSeen(selfAddress)
           setData(key, merged)
@@ -1276,14 +1288,14 @@ final class Replicator(settings: ReplicatorSettings) extends Actor with ActorLog
 
   def receiveGetKeyIds(): Unit = {
     val keys: Set[String] = dataEntries.collect {
-      case (key, (DataEnvelope(data, _), _)) if data != DeletedData ⇒ key
+      case (key, (DataEnvelope(data, _, _), _)) if data != DeletedData ⇒ key
     }(collection.breakOut)
     replyTo ! GetKeyIdsResult(keys)
   }
 
   def receiveDelete(key: KeyR, consistency: WriteConsistency, req: Option[Any]): Unit = {
     getData(key.id) match {
-      case Some(DataEnvelope(DeletedData, _)) ⇒
+      case Some(DataEnvelope(DeletedData, _, _)) ⇒
         // already deleted
         replyTo ! DataDeleted(key, req)
       case _ ⇒
@@ -1308,18 +1320,29 @@ final class Replicator(settings: ReplicatorSettings) extends Actor with ActorLog
   }
 
   def setData(key: String, envelope: DataEnvelope): Unit = {
+    val newEnvelope = {
+      if (deltaCrdtEnabled) {
+        val deltaVersions = envelope.deltaVersions
+        val currVersion = deltaPropagationSelector.currentVersion(key)
+        if (currVersion == 0L || currVersion == deltaVersions.versionAt(selfUniqueAddress))
+          envelope
+        else
+          envelope.copy(deltaVersions = deltaVersions.merge(VersionVector(selfUniqueAddress, currVersion)))
+      } else envelope
+    }
+
     val dig =
       if (subscribers.contains(key) && !changed.contains(key)) {
         val oldDigest = getDigest(key)
-        val dig = digest(envelope)
+        val dig = digest(newEnvelope)
         if (dig != oldDigest)
           changed += key // notify subscribers, later
         dig
-      } else if (envelope.data == DeletedData) DeletedDigest
+      } else if (newEnvelope.data == DeletedData) DeletedDigest
       else LazyDigest
 
-    dataEntries = dataEntries.updated(key, (envelope, dig))
-    if (envelope.data == DeletedData)
+    dataEntries = dataEntries.updated(key, (newEnvelope, dig))
+    if (newEnvelope.data == DeletedData)
       deltaPropagationSelector.delete(key)
   }
 
@@ -1342,6 +1365,12 @@ final class Replicator(settings: ReplicatorSettings) extends Actor with ActorLog
     }
 
   def getData(key: String): Option[DataEnvelope] = dataEntries.get(key).map { case (envelope, _) ⇒ envelope }
+
+  def getDeltaSeqNr(key: String, fromNode: UniqueAddress): Long =
+    dataEntries.get(key) match {
+      case Some((DataEnvelope(_, _, deltaVersions), _)) ⇒ deltaVersions.versionAt(fromNode)
+      case None                                         ⇒ 0L
+    }
 
   def receiveFlushChanges(): Unit = {
     def notify(keyId: String, subs: mutable.Set[ActorRef]): Unit = {
@@ -1378,15 +1407,39 @@ final class Replicator(settings: ReplicatorSettings) extends Actor with ActorLog
         // TODO split it to several DeltaPropagation if too many entries
         replica(node) ! deltaPropagation
     }
-    if (deltaPropagationSelector.propagationCount % deltaPropagationSelector.divisor == 0)
+
+    if (deltaPropagationSelector.propagationCount % deltaPropagationSelector.gossipIntervalDivisor == 0)
       deltaPropagationSelector.cleanupDeltaEntries()
   }
 
-  def receiveDeltaPropagation(deltas: Map[String, DataEnvelope]): Unit = {
-    if (log.isDebugEnabled)
-      log.debug("Received DeltaPropagation from [{}], containing [{}]", sender().path.address, deltas.keys.mkString(", "))
+  def receiveDeltaPropagation(fromNode: UniqueAddress, deltas: Map[String, Delta]): Unit = {
+    val isDebugEnabled = log.isDebugEnabled
+    if (isDebugEnabled)
+      // FIXME log.debug("Received DeltaPropagation from [{}], containing [{}]", fromNode.address,
+      //        deltas.collect { case (key, Delta(_, fromSeqNr, toSeqNr)) => s"$key $fromSeqNr-$toSeqNr" }.mkString(", "))
+      log.debug("Received DeltaPropagation from [{}], containing [{}]", fromNode.address,
+        deltas.collect { case (key, Delta(d, fromSeqNr, toSeqNr)) ⇒ s"$key $fromSeqNr-$toSeqNr ${d.data}" }.mkString(", "))
     deltas.foreach {
-      case (key, envelope) ⇒ writeAndStore(key, envelope)
+      case (key, Delta(envelope @ DataEnvelope(_: RequiresCausalDeliveryOfDeltas, _, _), fromSeqNr, toSeqNr)) ⇒
+        val currentSeqNr = getDeltaSeqNr(key, fromNode)
+        if (currentSeqNr >= toSeqNr) {
+          if (isDebugEnabled) log.debug(
+            "Skipping DeltaPropagation from [{}] for [{}] because toSeqNr [{}] already handled [{}]",
+            fromNode.address, key, toSeqNr, currentSeqNr)
+        } else if (fromSeqNr > (currentSeqNr + 1)) {
+          if (isDebugEnabled) log.debug(
+            "Skipping DeltaPropagation from [{}] for [{}] because missing deltas between [{}-{}]",
+            fromNode.address, key, currentSeqNr + 1, fromSeqNr - 1)
+        } else {
+          if (isDebugEnabled) log.debug(
+            "Applying DeltaPropagation from [{}] for [{}] with sequence numbers [{}], current was [{}]",
+            fromNode.address, key, s"$fromSeqNr-$toSeqNr", currentSeqNr)
+          val newEnvelope = envelope.copy(deltaVersions = VersionVector(fromNode, toSeqNr))
+          writeAndStore(key, newEnvelope)
+        }
+      case (key, Delta(envelope, _, _)) ⇒
+        // causal delivery of deltas not needed, just apply it
+        writeAndStore(key, envelope)
     }
   }
 
@@ -1459,7 +1512,9 @@ final class Replicator(settings: ReplicatorSettings) extends Actor with ActorLog
 
   def receiveGossip(updatedData: Map[String, DataEnvelope], sendBack: Boolean): Unit = {
     if (log.isDebugEnabled)
-      log.debug("Received gossip from [{}], containing [{}]", replyTo.path.address, updatedData.keys.mkString(", "))
+      // FIXME log.debug("Received gossip from [{}], containing [{}]", replyTo.path.address, updatedData.keys.mkString(", "))
+      log.debug("Received gossip from [{}], containing [{}]", replyTo.path.address,
+        updatedData.map { case (key, d) ⇒ s"$key -> ${d.deltaVersions}" }.mkString(", "))
     var replyData = Map.empty[String, DataEnvelope]
     updatedData.foreach {
       case (key, envelope) ⇒
@@ -1568,7 +1623,7 @@ final class Replicator(settings: ReplicatorSettings) extends Actor with ActorLog
     val knownNodes = nodes union weaklyUpNodes union removedNodes.keySet.map(_.address)
     val newRemovedNodes =
       dataEntries.foldLeft(Set.empty[UniqueAddress]) {
-        case (acc, (_, (envelope @ DataEnvelope(data: RemovedNodePruning, _), _))) ⇒
+        case (acc, (_, (envelope @ DataEnvelope(data: RemovedNodePruning, _, _), _))) ⇒
           acc union data.modifiedByNodes.filterNot(n ⇒ n == selfUniqueAddress || knownNodes(n.address))
         case (acc, _) ⇒
           acc
@@ -1616,7 +1671,7 @@ final class Replicator(settings: ReplicatorSettings) extends Actor with ActorLog
     val pruningPerformed = PruningPerformed(System.currentTimeMillis() + pruningMarkerTimeToLive.toMillis)
     val durablePruningPerformed = PruningPerformed(System.currentTimeMillis() + durablePruningMarkerTimeToLive.toMillis)
     dataEntries.foreach {
-      case (key, (envelope @ DataEnvelope(data: RemovedNodePruning, pruning), _)) ⇒
+      case (key, (envelope @ DataEnvelope(data: RemovedNodePruning, pruning, _), _)) ⇒
         pruning.foreach {
           case (removed, PruningInitialized(owner, seen)) if owner == selfUniqueAddress
             && (allNodes.isEmpty || allNodes.forall(seen)) ⇒
@@ -1634,7 +1689,7 @@ final class Replicator(settings: ReplicatorSettings) extends Actor with ActorLog
   def deleteObsoletePruningPerformed(): Unit = {
     val currentTime = System.currentTimeMillis()
     dataEntries.foreach {
-      case (key, (envelope @ DataEnvelope(_: RemovedNodePruning, pruning), _)) ⇒
+      case (key, (envelope @ DataEnvelope(_: RemovedNodePruning, pruning, _), _)) ⇒
         val newEnvelope = pruning.foldLeft(envelope) {
           case (acc, (removed, p: PruningPerformed)) if p.isObsolete(currentTime) ⇒
             log.debug("Removing obsolete pruning marker for [{}] in [{}]", removed, key)

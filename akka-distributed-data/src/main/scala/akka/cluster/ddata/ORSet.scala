@@ -36,6 +36,15 @@ object ORSet {
    */
   private[akka]type Dot = VersionVector
 
+  /** INTERNAL API */
+  private[akka] sealed trait DeltaOp
+  /** INTERNAL API */
+  private[akka] case object NotDeltaOp extends DeltaOp
+  /** INTERNAL API */
+  private[akka] case object AddDeltaOp extends DeltaOp
+  /** INTERNAL API */
+  private[akka] case object RemoveDeltaOp extends DeltaOp
+
   /**
    * INTERNAL API
    * Subtract the `vvector` from the `dot`.
@@ -201,8 +210,13 @@ object ORSet {
 @SerialVersionUID(1L)
 final class ORSet[A] private[akka] (
   private[akka] val elementsMap: Map[A, ORSet.Dot],
-  private[akka] val vvector:     VersionVector)
-  extends ReplicatedData with ReplicatedDataSerialization with RemovedNodePruning with FastMerge {
+  private[akka] val vvector:     VersionVector,
+  private[akka] val _delta:      Option[ORSet[A]]  = None,
+  private[akka] val deltaOp:     ORSet.DeltaOp     = ORSet.NotDeltaOp)
+  extends DeltaReplicatedData with RequiresCausalDeliveryOfDeltas
+  with ReplicatedDataSerialization with RemovedNodePruning with FastMerge {
+
+  import ORSet.{ AddDeltaOp, RemoveDeltaOp }
 
   type T = ORSet[A]
 
@@ -241,7 +255,13 @@ final class ORSet[A] private[akka] (
   private[akka] def add(node: UniqueAddress, element: A): ORSet[A] = {
     val newVvector = vvector + node
     val newDot = VersionVector(node, newVvector.versionAt(node))
-    assignAncestor(new ORSet(elementsMap = elementsMap.updated(element, newDot), vvector = newVvector))
+    val newDelta = _delta match {
+      case None ⇒ new ORSet(Map(element → newDot), newDot, deltaOp = AddDeltaOp)
+      case Some(d) ⇒
+        // FIXME handle merge/accumulation of deltas
+        new ORSet(d.elementsMap.updated(element, newDot), newDot, deltaOp = AddDeltaOp)
+    }
+    assignAncestor(new ORSet(elementsMap.updated(element, newDot), newVvector, Some(newDelta)))
   }
 
   /**
@@ -257,8 +277,12 @@ final class ORSet[A] private[akka] (
   /**
    * INTERNAL API
    */
-  private[akka] def remove(node: UniqueAddress, element: A): ORSet[A] =
-    assignAncestor(copy(elementsMap = elementsMap - element))
+  private[akka] def remove(node: UniqueAddress, element: A): ORSet[A] = {
+    // FIXME handle existing delta
+    val deltaDot = VersionVector(node, vvector.versionAt(node))
+    val newDelta = new ORSet(Map(element → deltaDot), vvector, deltaOp = RemoveDeltaOp)
+    assignAncestor(copy(elementsMap = elementsMap - element, delta = Some(newDelta)))
+  }
 
   /**
    * Removes all elements from the set, but keeps the history.
@@ -271,7 +295,7 @@ final class ORSet[A] private[akka] (
    * INTERNAL API
    */
   private[akka] def clear(node: UniqueAddress): ORSet[A] =
-    assignAncestor(copy(elementsMap = Map.empty))
+    assignAncestor(copy(elementsMap = Map.empty)) // FIXME delta?
 
   /**
    * When element is in this Set but not in that Set:
@@ -287,7 +311,9 @@ final class ORSet[A] private[akka] (
    * Keep only common dots, and dots that are not dominated by the other sides version vector
    */
   override def merge(that: ORSet[A]): ORSet[A] = {
-    if ((this eq that) || that.isAncestorOf(this)) this.clearAncestor()
+    if (that.deltaOp == AddDeltaOp) mergeAddDelta(that)
+    else if (that.deltaOp == RemoveDeltaOp) mergeRemoveDelta(that)
+    else if ((this eq that) || that.isAncestorOf(this)) this.clearAncestor()
     else if (this.isAncestorOf(that)) that.clearAncestor()
     else {
       val commonKeys =
@@ -306,6 +332,46 @@ final class ORSet[A] private[akka] (
       new ORSet(entries, mergedVvector)
     }
   }
+
+  private def mergeAddDelta(that: ORSet[A]): ORSet[A] = {
+    val commonKeys =
+      if (this.elementsMap.size < that.elementsMap.size)
+        this.elementsMap.keysIterator.filter(that.elementsMap.contains)
+      else
+        that.elementsMap.keysIterator.filter(this.elementsMap.contains)
+    val entries00 = ORSet.mergeCommonKeys(commonKeys, this, that)
+    // FIXME
+    //    val thisUniqueKeys = this.elementsMap.keysIterator.filterNot(that.elementsMap.contains)
+    //    val entries0 = ORSet.mergeDisjointKeys(thisUniqueKeys, this.elementsMap, that.vvector, entries00)
+    val entries0 = entries00 ++ this.elementsMap.filter { case (elem, _) ⇒ !that.elementsMap.contains(elem) }
+    val thatUniqueKeys = that.elementsMap.keysIterator.filterNot(this.elementsMap.contains)
+    val entries = ORSet.mergeDisjointKeys(thatUniqueKeys, that.elementsMap, this.vvector, entries0)
+    val mergedVvector = this.vvector.merge(that.vvector)
+
+    clearAncestor()
+    new ORSet(entries, mergedVvector)
+  }
+
+  private def mergeRemoveDelta(that: ORSet[A]): ORSet[A] = {
+    val (elem, thatDot) = that.elementsMap.head
+    val newElementsMap = elementsMap.get(elem) match {
+      case Some(thisDot) ⇒
+        if (thisDot == thatDot) elementsMap - elem
+        else elementsMap
+      case None ⇒
+        elementsMap
+    }
+    clearAncestor()
+    val newVvector = vvector.merge(that.vvector)
+    new ORSet(newElementsMap, newVvector)
+  }
+
+  override def delta: ORSet[A] = _delta match {
+    case Some(d) ⇒ d
+    case None    ⇒ ORSet.empty
+  }
+
+  override def resetDelta: ORSet[A] = new ORSet(elementsMap, vvector)
 
   override def modifiedByNodes: Set[UniqueAddress] =
     vvector.modifiedByNodes
@@ -339,12 +405,15 @@ final class ORSet[A] private[akka] (
     new ORSet(updated, vvector.pruningCleanup(removedNode))
   }
 
-  private def copy(elementsMap: Map[A, ORSet.Dot] = this.elementsMap, vvector: VersionVector = this.vvector): ORSet[A] =
-    new ORSet(elementsMap, vvector)
+  private def copy(elementsMap: Map[A, ORSet.Dot] = this.elementsMap, vvector: VersionVector = this.vvector,
+                   delta: Option[ORSet[A]] = this._delta): ORSet[A] =
+    new ORSet(elementsMap, vvector, delta)
 
   // this class cannot be a `case class` because we need different `unapply`
 
-  override def toString: String = s"OR$elements"
+  override def toString: String =
+    // FIXME s"OR$elements"
+    s"ORSet([${elementsMap.mkString(",")}], $vvector)"
 
   override def equals(o: Any): Boolean = o match {
     case other: ORSet[_] ⇒ vvector == other.vvector && elementsMap == other.elementsMap

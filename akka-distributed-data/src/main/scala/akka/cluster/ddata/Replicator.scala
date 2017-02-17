@@ -1206,7 +1206,6 @@ final class Replicator(settings: ReplicatorSettings) extends Actor with ActorLog
     } match {
       case Success((envelope, delta)) ⇒
         log.debug("Received Update for key [{}], old data [{}], new data [{}], delta [{}]", key, localValue, envelope.data, delta)
-        setData(key.id, envelope)
 
         // handle the delta
         delta match {
@@ -1214,24 +1213,28 @@ final class Replicator(settings: ReplicatorSettings) extends Actor with ActorLog
           case None    ⇒ // not DeltaReplicatedData
         }
 
+        // note that it's important to do deltaPropagationSelector.update before setData,
+        // so that the latest delta version is used
+        val newEnvelope = setData(key.id, envelope)
+
         val durable = isDurable(key.id)
         if (isLocalUpdate(writeConsistency)) {
           if (durable)
-            durableStore ! Store(key.id, new DurableDataEnvelope(envelope),
+            durableStore ! Store(key.id, new DurableDataEnvelope(newEnvelope),
               Some(StoreReply(UpdateSuccess(key, req), StoreFailure(key, req), replyTo)))
           else
             replyTo ! UpdateSuccess(key, req)
         } else {
           val writeEnvelope = delta match {
-            case Some(d: RequiresCausalDeliveryOfDeltas) ⇒ envelope
+            case Some(d: RequiresCausalDeliveryOfDeltas) ⇒ newEnvelope
             case Some(d)                                 ⇒ DataEnvelope(d)
-            case None                                    ⇒ envelope
+            case None                                    ⇒ newEnvelope
           }
           val writeAggregator =
             context.actorOf(WriteAggregator.props(key, writeEnvelope, writeConsistency, req, nodes, unreachable, replyTo, durable)
               .withDispatcher(context.props.dispatcher))
           if (durable) {
-            durableStore ! Store(key.id, new DurableDataEnvelope(envelope),
+            durableStore ! Store(key.id, new DurableDataEnvelope(newEnvelope),
               Some(StoreReply(UpdateSuccess(key, req), StoreFailure(key, req), writeAggregator)))
           }
         }
@@ -1345,7 +1348,8 @@ final class Replicator(settings: ReplicatorSettings) extends Actor with ActorLog
     }
   }
 
-  def setData(key: String, envelope: DataEnvelope): Unit = {
+  // FIXME return the newEnvelope and use from receiveUpdate
+  def setData(key: String, envelope: DataEnvelope): DataEnvelope = {
     val newEnvelope = {
       if (deltaCrdtEnabled) {
         val deltaVersions = envelope.deltaVersions
@@ -1370,6 +1374,7 @@ final class Replicator(settings: ReplicatorSettings) extends Actor with ActorLog
     dataEntries = dataEntries.updated(key, (newEnvelope, dig))
     if (newEnvelope.data == DeletedData)
       deltaPropagationSelector.delete(key)
+    newEnvelope
   }
 
   def getDigest(key: String): Digest = {

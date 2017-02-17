@@ -672,10 +672,23 @@ object Replicator {
             pruning = filteredMergedPruning).merge(other.data)
         }
 
-      def merge(otherData: ReplicatedData): DataEnvelope =
+      def merge(otherData: ReplicatedData): DataEnvelope = {
         if (otherData == DeletedData) DeletedEnvelope
-        else copy(
-          data = data merge cleaned(otherData, pruning).asInstanceOf[data.T])
+        else {
+          val mergedData =
+            cleaned(otherData, pruning) match {
+              case d: ReplicatedDelta ⇒ data match {
+                case drd: DeltaReplicatedData ⇒ drd.mergeDelta(d.asInstanceOf[drd.D])
+                case _                        ⇒ throw new IllegalArgumentException("Expected DeltaReplicatedData")
+              }
+              case c ⇒ data.merge(c.asInstanceOf[data.T])
+            }
+          if (data.getClass != mergedData.getClass)
+            throw new IllegalArgumentException(
+              s"Wrong type, existing type [${data.getClass.getName}], got [${mergedData.getClass.getName}]")
+          copy(data = mergedData)
+        }
+      }
 
       private def cleaned(c: ReplicatedData, p: Map[UniqueAddress, PruningState]): ReplicatedData = p.foldLeft(c) {
         case (c: RemovedNodePruning, (removed, _: PruningPerformed)) ⇒
@@ -1181,12 +1194,12 @@ final class Replicator(settings: ReplicatorSettings) extends Actor with ActorLog
         case Some(envelope @ DataEnvelope(existing, _, _)) ⇒
           modify(Some(existing)) match {
             case d: DeltaReplicatedData if deltaCrdtEnabled ⇒
-              (envelope.merge(d.resetDelta.asInstanceOf[existing.T]), Some(d.delta))
+              (envelope.merge(d.resetDelta.asInstanceOf[existing.T]), d.delta)
             case d ⇒
               (envelope.merge(d.asInstanceOf[existing.T]), None)
           }
         case None ⇒ modify(None) match {
-          case d: DeltaReplicatedData if deltaCrdtEnabled ⇒ (DataEnvelope(d.resetDelta), Some(d.delta))
+          case d: DeltaReplicatedData if deltaCrdtEnabled ⇒ (DataEnvelope(d.resetDelta), d.delta)
           case d ⇒ (DataEnvelope(d), None)
         }
       }
@@ -1252,25 +1265,38 @@ final class Replicator(settings: ReplicatorSettings) extends Actor with ActorLog
     }
   }
 
-  def write(key: String, writeEnvelope: DataEnvelope): Option[DataEnvelope] =
+  def write(key: String, writeEnvelope: DataEnvelope): Option[DataEnvelope] = {
     getData(key) match {
-      case Some(DataEnvelope(DeletedData, _, _)) ⇒ Some(DeletedEnvelope) // already deleted
+      case someEnvelope @ Some(envelope) if envelope eq writeEnvelope ⇒ someEnvelope
+      case Some(DataEnvelope(DeletedData, _, _))                      ⇒ Some(DeletedEnvelope) // already deleted
       case Some(envelope @ DataEnvelope(existing, _, _)) ⇒
-        if (existing.getClass == writeEnvelope.data.getClass || writeEnvelope.data == DeletedData) {
+        try {
+          // DataEnvelope will mergeDelta when needed
           val merged = envelope.merge(writeEnvelope).addSeen(selfAddress)
           setData(key, merged)
           Some(merged)
-        } else {
-          log.warning(
-            "Wrong type for writing [{}], existing type [{}], got [{}]",
-            key, existing.getClass.getName, writeEnvelope.data.getClass.getName)
-          None
+        } catch {
+          case e: IllegalArgumentException ⇒
+            log.warning(
+              "Couldn't merge [{}], due to: {}", key, e.getMessage)
+            None
         }
       case None ⇒
-        val writeEnvelope2 = writeEnvelope.addSeen(selfAddress)
-        setData(key, writeEnvelope2)
-        Some(writeEnvelope2)
+        // no existing data for the key
+        val writeEnvelope2 =
+          writeEnvelope.data match {
+            case d: ReplicatedDelta ⇒
+              val z = d.zero
+              writeEnvelope.copy(data = z.mergeDelta(d.asInstanceOf[z.D]))
+            case _ ⇒
+              writeEnvelope
+          }
+
+        val writeEnvelope3 = writeEnvelope2.addSeen(selfAddress)
+        setData(key, writeEnvelope3)
+        Some(writeEnvelope3)
     }
+  }
 
   def writeAndStore(key: String, writeEnvelope: DataEnvelope): Unit = {
     write(key, writeEnvelope) match {
@@ -1360,7 +1386,7 @@ final class Replicator(settings: ReplicatorSettings) extends Actor with ActorLog
   def digest(envelope: DataEnvelope): Digest =
     if (envelope.data == DeletedData) DeletedDigest
     else {
-      val bytes = serializer.toBinary(envelope)
+      val bytes = serializer.toBinary(envelope.withoutDeltaVersions)
       ByteString.fromArray(MessageDigest.getInstance("SHA-1").digest(bytes))
     }
 
@@ -1412,36 +1438,38 @@ final class Replicator(settings: ReplicatorSettings) extends Actor with ActorLog
       deltaPropagationSelector.cleanupDeltaEntries()
   }
 
-  def receiveDeltaPropagation(fromNode: UniqueAddress, deltas: Map[String, Delta]): Unit = {
-    val isDebugEnabled = log.isDebugEnabled
-    if (isDebugEnabled)
-      // FIXME log.debug("Received DeltaPropagation from [{}], containing [{}]", fromNode.address,
-      //        deltas.collect { case (key, Delta(_, fromSeqNr, toSeqNr)) => s"$key $fromSeqNr-$toSeqNr" }.mkString(", "))
-      log.debug("Received DeltaPropagation from [{}], containing [{}]", fromNode.address,
-        deltas.collect { case (key, Delta(d, fromSeqNr, toSeqNr)) ⇒ s"$key $fromSeqNr-$toSeqNr ${d.data}" }.mkString(", "))
-    deltas.foreach {
-      case (key, Delta(envelope @ DataEnvelope(_: RequiresCausalDeliveryOfDeltas, _, _), fromSeqNr, toSeqNr)) ⇒
-        val currentSeqNr = getDeltaSeqNr(key, fromNode)
-        if (currentSeqNr >= toSeqNr) {
-          if (isDebugEnabled) log.debug(
-            "Skipping DeltaPropagation from [{}] for [{}] because toSeqNr [{}] already handled [{}]",
-            fromNode.address, key, toSeqNr, currentSeqNr)
-        } else if (fromSeqNr > (currentSeqNr + 1)) {
-          if (isDebugEnabled) log.debug(
-            "Skipping DeltaPropagation from [{}] for [{}] because missing deltas between [{}-{}]",
-            fromNode.address, key, currentSeqNr + 1, fromSeqNr - 1)
-        } else {
-          if (isDebugEnabled) log.debug(
-            "Applying DeltaPropagation from [{}] for [{}] with sequence numbers [{}], current was [{}]",
-            fromNode.address, key, s"$fromSeqNr-$toSeqNr", currentSeqNr)
-          val newEnvelope = envelope.copy(deltaVersions = VersionVector(fromNode, toSeqNr))
-          writeAndStore(key, newEnvelope)
-        }
-      case (key, Delta(envelope, _, _)) ⇒
-        // causal delivery of deltas not needed, just apply it
-        writeAndStore(key, envelope)
+  def receiveDeltaPropagation(fromNode: UniqueAddress, deltas: Map[String, Delta]): Unit =
+    if (deltaCrdtEnabled) {
+      val isDebugEnabled = log.isDebugEnabled
+      if (isDebugEnabled)
+        // FIXME log.debug("Received DeltaPropagation from [{}], containing [{}]", fromNode.address,
+        //        deltas.collect { case (key, Delta(_, fromSeqNr, toSeqNr)) => s"$key $fromSeqNr-$toSeqNr" }.mkString(", "))
+        log.debug("Received DeltaPropagation from [{}], containing [{}]", fromNode.address,
+          deltas.collect { case (key, Delta(d, fromSeqNr, toSeqNr)) ⇒ s"$key $fromSeqNr-$toSeqNr ${d.data}" }.mkString(", "))
+
+      deltas.foreach {
+        case (key, Delta(envelope @ DataEnvelope(_: RequiresCausalDeliveryOfDeltas, _, _), fromSeqNr, toSeqNr)) ⇒
+          val currentSeqNr = getDeltaSeqNr(key, fromNode)
+          if (currentSeqNr >= toSeqNr) {
+            if (isDebugEnabled) log.debug(
+              "Skipping DeltaPropagation from [{}] for [{}] because toSeqNr [{}] already handled [{}]",
+              fromNode.address, key, toSeqNr, currentSeqNr)
+          } else if (fromSeqNr > (currentSeqNr + 1)) {
+            if (isDebugEnabled) log.debug(
+              "Skipping DeltaPropagation from [{}] for [{}] because missing deltas between [{}-{}]",
+              fromNode.address, key, currentSeqNr + 1, fromSeqNr - 1)
+          } else {
+            if (isDebugEnabled) log.debug(
+              "Applying DeltaPropagation from [{}] for [{}] with sequence numbers [{}], current was [{}]",
+              fromNode.address, key, s"$fromSeqNr-$toSeqNr", currentSeqNr)
+            val newEnvelope = envelope.copy(deltaVersions = VersionVector(fromNode, toSeqNr))
+            writeAndStore(key, newEnvelope)
+          }
+        case (key, Delta(envelope, _, _)) ⇒
+          // causal delivery of deltas not needed, just apply it
+          writeAndStore(key, envelope)
+      }
     }
-  }
 
   def receiveGossipTick(): Unit = {
     if (fullStateGossipEnabled)

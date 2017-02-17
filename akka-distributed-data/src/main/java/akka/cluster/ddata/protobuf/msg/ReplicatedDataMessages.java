@@ -8,88 +8,6 @@ public final class ReplicatedDataMessages {
   public static void registerAllExtensions(
       akka.protobuf.ExtensionRegistry registry) {
   }
-  /**
-   * Protobuf enum {@code akka.cluster.ddata.ORSetDeltaOp}
-   */
-  public enum ORSetDeltaOp
-      implements akka.protobuf.ProtocolMessageEnum {
-    /**
-     * <code>Add = 0;</code>
-     */
-    Add(0, 0),
-    /**
-     * <code>Remove = 1;</code>
-     */
-    Remove(1, 1),
-    ;
-
-    /**
-     * <code>Add = 0;</code>
-     */
-    public static final int Add_VALUE = 0;
-    /**
-     * <code>Remove = 1;</code>
-     */
-    public static final int Remove_VALUE = 1;
-
-
-    public final int getNumber() { return value; }
-
-    public static ORSetDeltaOp valueOf(int value) {
-      switch (value) {
-        case 0: return Add;
-        case 1: return Remove;
-        default: return null;
-      }
-    }
-
-    public static akka.protobuf.Internal.EnumLiteMap<ORSetDeltaOp>
-        internalGetValueMap() {
-      return internalValueMap;
-    }
-    private static akka.protobuf.Internal.EnumLiteMap<ORSetDeltaOp>
-        internalValueMap =
-          new akka.protobuf.Internal.EnumLiteMap<ORSetDeltaOp>() {
-            public ORSetDeltaOp findValueByNumber(int number) {
-              return ORSetDeltaOp.valueOf(number);
-            }
-          };
-
-    public final akka.protobuf.Descriptors.EnumValueDescriptor
-        getValueDescriptor() {
-      return getDescriptor().getValues().get(index);
-    }
-    public final akka.protobuf.Descriptors.EnumDescriptor
-        getDescriptorForType() {
-      return getDescriptor();
-    }
-    public static final akka.protobuf.Descriptors.EnumDescriptor
-        getDescriptor() {
-      return akka.cluster.ddata.protobuf.msg.ReplicatedDataMessages.getDescriptor().getEnumTypes().get(0);
-    }
-
-    private static final ORSetDeltaOp[] VALUES = values();
-
-    public static ORSetDeltaOp valueOf(
-        akka.protobuf.Descriptors.EnumValueDescriptor desc) {
-      if (desc.getType() != getDescriptor()) {
-        throw new java.lang.IllegalArgumentException(
-          "EnumValueDescriptor is not for this type.");
-      }
-      return VALUES[desc.getIndex()];
-    }
-
-    private final int index;
-    private final int value;
-
-    private ORSetDeltaOp(int index, int value) {
-      this.index = index;
-      this.value = value;
-    }
-
-    // @@protoc_insertion_point(enum_scope:akka.cluster.ddata.ORSetDeltaOp)
-  }
-
   public interface GSetOrBuilder
       extends akka.protobuf.MessageOrBuilder {
 
@@ -1409,16 +1327,6 @@ public final class ReplicatedDataMessages {
      */
     akka.cluster.ddata.protobuf.msg.ReplicatorMessages.OtherMessageOrBuilder getOtherElementsOrBuilder(
         int index);
-
-    // optional .akka.cluster.ddata.ORSetDeltaOp deltaOp = 7;
-    /**
-     * <code>optional .akka.cluster.ddata.ORSetDeltaOp deltaOp = 7;</code>
-     */
-    boolean hasDeltaOp();
-    /**
-     * <code>optional .akka.cluster.ddata.ORSetDeltaOp deltaOp = 7;</code>
-     */
-    akka.cluster.ddata.protobuf.msg.ReplicatedDataMessages.ORSetDeltaOp getDeltaOp();
   }
   /**
    * Protobuf type {@code akka.cluster.ddata.ORSet}
@@ -1548,17 +1456,6 @@ public final class ReplicatedDataMessages {
                 mutable_bitField0_ |= 0x00000020;
               }
               otherElements_.add(input.readMessage(akka.cluster.ddata.protobuf.msg.ReplicatorMessages.OtherMessage.PARSER, extensionRegistry));
-              break;
-            }
-            case 56: {
-              int rawValue = input.readEnum();
-              akka.cluster.ddata.protobuf.msg.ReplicatedDataMessages.ORSetDeltaOp value = akka.cluster.ddata.protobuf.msg.ReplicatedDataMessages.ORSetDeltaOp.valueOf(rawValue);
-              if (value == null) {
-                unknownFields.mergeVarintField(7, rawValue);
-              } else {
-                bitField0_ |= 0x00000002;
-                deltaOp_ = value;
-              }
               break;
             }
           }
@@ -1788,22 +1685,6 @@ public final class ReplicatedDataMessages {
       return otherElements_.get(index);
     }
 
-    // optional .akka.cluster.ddata.ORSetDeltaOp deltaOp = 7;
-    public static final int DELTAOP_FIELD_NUMBER = 7;
-    private akka.cluster.ddata.protobuf.msg.ReplicatedDataMessages.ORSetDeltaOp deltaOp_;
-    /**
-     * <code>optional .akka.cluster.ddata.ORSetDeltaOp deltaOp = 7;</code>
-     */
-    public boolean hasDeltaOp() {
-      return ((bitField0_ & 0x00000002) == 0x00000002);
-    }
-    /**
-     * <code>optional .akka.cluster.ddata.ORSetDeltaOp deltaOp = 7;</code>
-     */
-    public akka.cluster.ddata.protobuf.msg.ReplicatedDataMessages.ORSetDeltaOp getDeltaOp() {
-      return deltaOp_;
-    }
-
     private void initFields() {
       vvector_ = akka.cluster.ddata.protobuf.msg.ReplicatorMessages.VersionVector.getDefaultInstance();
       dots_ = java.util.Collections.emptyList();
@@ -1811,7 +1692,6 @@ public final class ReplicatedDataMessages {
       intElements_ = java.util.Collections.emptyList();
       longElements_ = java.util.Collections.emptyList();
       otherElements_ = java.util.Collections.emptyList();
-      deltaOp_ = akka.cluster.ddata.protobuf.msg.ReplicatedDataMessages.ORSetDeltaOp.Add;
     }
     private byte memoizedIsInitialized = -1;
     public final boolean isInitialized() {
@@ -1871,9 +1751,6 @@ public final class ReplicatedDataMessages {
       for (int i = 0; i < otherElements_.size(); i++) {
         output.writeMessage(6, otherElements_.get(i));
       }
-      if (((bitField0_ & 0x00000002) == 0x00000002)) {
-        output.writeEnum(7, deltaOp_.getNumber());
-      }
       getUnknownFields().writeTo(output);
     }
 
@@ -1931,10 +1808,6 @@ public final class ReplicatedDataMessages {
       for (int i = 0; i < otherElements_.size(); i++) {
         size += akka.protobuf.CodedOutputStream
           .computeMessageSize(6, otherElements_.get(i));
-      }
-      if (((bitField0_ & 0x00000002) == 0x00000002)) {
-        size += akka.protobuf.CodedOutputStream
-          .computeEnumSize(7, deltaOp_.getNumber());
       }
       size += getUnknownFields().getSerializedSize();
       memoizedSerializedSize = size;
@@ -2079,8 +1952,6 @@ public final class ReplicatedDataMessages {
         } else {
           otherElementsBuilder_.clear();
         }
-        deltaOp_ = akka.cluster.ddata.protobuf.msg.ReplicatedDataMessages.ORSetDeltaOp.Add;
-        bitField0_ = (bitField0_ & ~0x00000040);
         return this;
       }
 
@@ -2151,10 +2022,6 @@ public final class ReplicatedDataMessages {
         } else {
           result.otherElements_ = otherElementsBuilder_.build();
         }
-        if (((from_bitField0_ & 0x00000040) == 0x00000040)) {
-          to_bitField0_ |= 0x00000002;
-        }
-        result.deltaOp_ = deltaOp_;
         result.bitField0_ = to_bitField0_;
         onBuilt();
         return result;
@@ -2255,9 +2122,6 @@ public final class ReplicatedDataMessages {
               otherElementsBuilder_.addAllMessages(other.otherElements_);
             }
           }
-        }
-        if (other.hasDeltaOp()) {
-          setDeltaOp(other.getDeltaOp());
         }
         this.mergeUnknownFields(other.getUnknownFields());
         return this;
@@ -3126,42 +2990,6 @@ public final class ReplicatedDataMessages {
           otherElements_ = null;
         }
         return otherElementsBuilder_;
-      }
-
-      // optional .akka.cluster.ddata.ORSetDeltaOp deltaOp = 7;
-      private akka.cluster.ddata.protobuf.msg.ReplicatedDataMessages.ORSetDeltaOp deltaOp_ = akka.cluster.ddata.protobuf.msg.ReplicatedDataMessages.ORSetDeltaOp.Add;
-      /**
-       * <code>optional .akka.cluster.ddata.ORSetDeltaOp deltaOp = 7;</code>
-       */
-      public boolean hasDeltaOp() {
-        return ((bitField0_ & 0x00000040) == 0x00000040);
-      }
-      /**
-       * <code>optional .akka.cluster.ddata.ORSetDeltaOp deltaOp = 7;</code>
-       */
-      public akka.cluster.ddata.protobuf.msg.ReplicatedDataMessages.ORSetDeltaOp getDeltaOp() {
-        return deltaOp_;
-      }
-      /**
-       * <code>optional .akka.cluster.ddata.ORSetDeltaOp deltaOp = 7;</code>
-       */
-      public Builder setDeltaOp(akka.cluster.ddata.protobuf.msg.ReplicatedDataMessages.ORSetDeltaOp value) {
-        if (value == null) {
-          throw new NullPointerException();
-        }
-        bitField0_ |= 0x00000040;
-        deltaOp_ = value;
-        onChanged();
-        return this;
-      }
-      /**
-       * <code>optional .akka.cluster.ddata.ORSetDeltaOp deltaOp = 7;</code>
-       */
-      public Builder clearDeltaOp() {
-        bitField0_ = (bitField0_ & ~0x00000040);
-        deltaOp_ = akka.cluster.ddata.protobuf.msg.ReplicatedDataMessages.ORSetDeltaOp.Add;
-        onChanged();
-        return this;
       }
 
       // @@protoc_insertion_point(builder_scope:akka.cluster.ddata.ORSet)
@@ -14288,53 +14116,51 @@ public final class ReplicatedDataMessages {
       "\004GSet\022\026\n\016stringElements\030\001 \003(\t\022\027\n\013intElem" +
       "ents\030\002 \003(\021B\002\020\001\022\030\n\014longElements\030\003 \003(\022B\002\020\001" +
       "\0227\n\rotherElements\030\004 \003(\0132 .akka.cluster.d" +
-      "data.OtherMessage\"\243\002\n\005ORSet\0222\n\007vvector\030\001" +
+      "data.OtherMessage\"\360\001\n\005ORSet\0222\n\007vvector\030\001" +
       " \002(\0132!.akka.cluster.ddata.VersionVector\022" +
       "/\n\004dots\030\002 \003(\0132!.akka.cluster.ddata.Versi" +
       "onVector\022\026\n\016stringElements\030\003 \003(\t\022\027\n\013intE" +
       "lements\030\004 \003(\021B\002\020\001\022\030\n\014longElements\030\005 \003(\022B",
       "\002\020\001\0227\n\rotherElements\030\006 \003(\0132 .akka.cluste" +
-      "r.ddata.OtherMessage\0221\n\007deltaOp\030\007 \001(\0162 ." +
-      "akka.cluster.ddata.ORSetDeltaOp\"\027\n\004Flag\022" +
-      "\017\n\007enabled\030\001 \002(\010\"\202\001\n\013LWWRegister\022\021\n\ttime" +
-      "stamp\030\001 \002(\022\022/\n\004node\030\002 \002(\0132!.akka.cluster" +
-      ".ddata.UniqueAddress\022/\n\005state\030\003 \002(\0132 .ak" +
-      "ka.cluster.ddata.OtherMessage\"\210\001\n\010GCount" +
-      "er\0223\n\007entries\030\001 \003(\0132\".akka.cluster.ddata" +
-      ".GCounter.Entry\032G\n\005Entry\022/\n\004node\030\001 \002(\0132!" +
-      ".akka.cluster.ddata.UniqueAddress\022\r\n\005val",
-      "ue\030\002 \002(\014\"o\n\tPNCounter\0220\n\nincrements\030\001 \002(" +
-      "\0132\034.akka.cluster.ddata.GCounter\0220\n\ndecre" +
-      "ments\030\002 \002(\0132\034.akka.cluster.ddata.GCounte" +
-      "r\"\205\002\n\005ORMap\022\'\n\004keys\030\001 \002(\0132\031.akka.cluster" +
-      ".ddata.ORSet\0220\n\007entries\030\002 \003(\0132\037.akka.clu" +
-      "ster.ddata.ORMap.Entry\032\240\001\n\005Entry\022\021\n\tstri" +
-      "ngKey\030\001 \001(\t\022/\n\005value\030\002 \002(\0132 .akka.cluste" +
-      "r.ddata.OtherMessage\022\016\n\006intKey\030\003 \001(\021\022\017\n\007" +
-      "longKey\030\004 \001(\022\0222\n\010otherKey\030\005 \001(\0132 .akka.c" +
-      "luster.ddata.OtherMessage\"\206\002\n\006LWWMap\022\'\n\004",
-      "keys\030\001 \002(\0132\031.akka.cluster.ddata.ORSet\0221\n" +
-      "\007entries\030\002 \003(\0132 .akka.cluster.ddata.LWWM" +
-      "ap.Entry\032\237\001\n\005Entry\022\021\n\tstringKey\030\001 \001(\t\022.\n" +
-      "\005value\030\002 \002(\0132\037.akka.cluster.ddata.LWWReg" +
-      "ister\022\016\n\006intKey\030\003 \001(\021\022\017\n\007longKey\030\004 \001(\022\0222" +
-      "\n\010otherKey\030\005 \001(\0132 .akka.cluster.ddata.Ot" +
-      "herMessage\"\220\002\n\014PNCounterMap\022\'\n\004keys\030\001 \002(" +
-      "\0132\031.akka.cluster.ddata.ORSet\0227\n\007entries\030" +
-      "\002 \003(\0132&.akka.cluster.ddata.PNCounterMap." +
-      "Entry\032\235\001\n\005Entry\022\021\n\tstringKey\030\001 \001(\t\022,\n\005va",
-      "lue\030\002 \002(\0132\035.akka.cluster.ddata.PNCounter" +
-      "\022\016\n\006intKey\030\003 \001(\021\022\017\n\007longKey\030\004 \001(\022\0222\n\010oth" +
-      "erKey\030\005 \001(\0132 .akka.cluster.ddata.OtherMe" +
-      "ssage\"\210\002\n\nORMultiMap\022\'\n\004keys\030\001 \002(\0132\031.akk" +
-      "a.cluster.ddata.ORSet\0225\n\007entries\030\002 \003(\0132$" +
-      ".akka.cluster.ddata.ORMultiMap.Entry\032\231\001\n" +
-      "\005Entry\022\021\n\tstringKey\030\001 \001(\t\022(\n\005value\030\002 \002(\013" +
-      "2\031.akka.cluster.ddata.ORSet\022\016\n\006intKey\030\003 " +
-      "\001(\021\022\017\n\007longKey\030\004 \001(\022\0222\n\010otherKey\030\005 \001(\0132 " +
-      ".akka.cluster.ddata.OtherMessage*#\n\014ORSe",
-      "tDeltaOp\022\007\n\003Add\020\000\022\n\n\006Remove\020\001B#\n\037akka.cl" +
-      "uster.ddata.protobuf.msgH\001"
+      "r.ddata.OtherMessage\"\027\n\004Flag\022\017\n\007enabled\030" +
+      "\001 \002(\010\"\202\001\n\013LWWRegister\022\021\n\ttimestamp\030\001 \002(\022" +
+      "\022/\n\004node\030\002 \002(\0132!.akka.cluster.ddata.Uniq" +
+      "ueAddress\022/\n\005state\030\003 \002(\0132 .akka.cluster." +
+      "ddata.OtherMessage\"\210\001\n\010GCounter\0223\n\007entri" +
+      "es\030\001 \003(\0132\".akka.cluster.ddata.GCounter.E" +
+      "ntry\032G\n\005Entry\022/\n\004node\030\001 \002(\0132!.akka.clust" +
+      "er.ddata.UniqueAddress\022\r\n\005value\030\002 \002(\014\"o\n" +
+      "\tPNCounter\0220\n\nincrements\030\001 \002(\0132\034.akka.cl",
+      "uster.ddata.GCounter\0220\n\ndecrements\030\002 \002(\013" +
+      "2\034.akka.cluster.ddata.GCounter\"\205\002\n\005ORMap" +
+      "\022\'\n\004keys\030\001 \002(\0132\031.akka.cluster.ddata.ORSe" +
+      "t\0220\n\007entries\030\002 \003(\0132\037.akka.cluster.ddata." +
+      "ORMap.Entry\032\240\001\n\005Entry\022\021\n\tstringKey\030\001 \001(\t" +
+      "\022/\n\005value\030\002 \002(\0132 .akka.cluster.ddata.Oth" +
+      "erMessage\022\016\n\006intKey\030\003 \001(\021\022\017\n\007longKey\030\004 \001" +
+      "(\022\0222\n\010otherKey\030\005 \001(\0132 .akka.cluster.ddat" +
+      "a.OtherMessage\"\206\002\n\006LWWMap\022\'\n\004keys\030\001 \002(\0132" +
+      "\031.akka.cluster.ddata.ORSet\0221\n\007entries\030\002 ",
+      "\003(\0132 .akka.cluster.ddata.LWWMap.Entry\032\237\001" +
+      "\n\005Entry\022\021\n\tstringKey\030\001 \001(\t\022.\n\005value\030\002 \002(" +
+      "\0132\037.akka.cluster.ddata.LWWRegister\022\016\n\006in" +
+      "tKey\030\003 \001(\021\022\017\n\007longKey\030\004 \001(\022\0222\n\010otherKey\030" +
+      "\005 \001(\0132 .akka.cluster.ddata.OtherMessage\"" +
+      "\220\002\n\014PNCounterMap\022\'\n\004keys\030\001 \002(\0132\031.akka.cl" +
+      "uster.ddata.ORSet\0227\n\007entries\030\002 \003(\0132&.akk" +
+      "a.cluster.ddata.PNCounterMap.Entry\032\235\001\n\005E" +
+      "ntry\022\021\n\tstringKey\030\001 \001(\t\022,\n\005value\030\002 \002(\0132\035" +
+      ".akka.cluster.ddata.PNCounter\022\016\n\006intKey\030",
+      "\003 \001(\021\022\017\n\007longKey\030\004 \001(\022\0222\n\010otherKey\030\005 \001(\013" +
+      "2 .akka.cluster.ddata.OtherMessage\"\210\002\n\nO" +
+      "RMultiMap\022\'\n\004keys\030\001 \002(\0132\031.akka.cluster.d" +
+      "data.ORSet\0225\n\007entries\030\002 \003(\0132$.akka.clust" +
+      "er.ddata.ORMultiMap.Entry\032\231\001\n\005Entry\022\021\n\ts" +
+      "tringKey\030\001 \001(\t\022(\n\005value\030\002 \002(\0132\031.akka.clu" +
+      "ster.ddata.ORSet\022\016\n\006intKey\030\003 \001(\021\022\017\n\007long" +
+      "Key\030\004 \001(\022\0222\n\010otherKey\030\005 \001(\0132 .akka.clust" +
+      "er.ddata.OtherMessageB#\n\037akka.cluster.dd" +
+      "ata.protobuf.msgH\001"
     };
     akka.protobuf.Descriptors.FileDescriptor.InternalDescriptorAssigner assigner =
       new akka.protobuf.Descriptors.FileDescriptor.InternalDescriptorAssigner() {
@@ -14352,7 +14178,7 @@ public final class ReplicatedDataMessages {
           internal_static_akka_cluster_ddata_ORSet_fieldAccessorTable = new
             akka.protobuf.GeneratedMessage.FieldAccessorTable(
               internal_static_akka_cluster_ddata_ORSet_descriptor,
-              new java.lang.String[] { "Vvector", "Dots", "StringElements", "IntElements", "LongElements", "OtherElements", "DeltaOp", });
+              new java.lang.String[] { "Vvector", "Dots", "StringElements", "IntElements", "LongElements", "OtherElements", });
           internal_static_akka_cluster_ddata_Flag_descriptor =
             getDescriptor().getMessageTypes().get(2);
           internal_static_akka_cluster_ddata_Flag_fieldAccessorTable = new

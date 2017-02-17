@@ -39,13 +39,15 @@ object GCounter {
  */
 @SerialVersionUID(1L)
 final class GCounter private[akka] (
-  private[akka] val state:  Map[UniqueAddress, BigInt] = Map.empty,
-  private[akka] val _delta: Option[GCounter]           = None)
-  extends DeltaReplicatedData with ReplicatedDataSerialization with RemovedNodePruning with FastMerge {
+  private[akka] val state: Map[UniqueAddress, BigInt] = Map.empty,
+  override val delta:      Option[GCounter]           = None)
+  extends DeltaReplicatedData with ReplicatedDelta
+  with ReplicatedDataSerialization with RemovedNodePruning with FastMerge {
 
   import GCounter.Zero
 
   type T = GCounter
+  type D = GCounter
 
   /**
    * Scala API: Current total value of the counter.
@@ -86,7 +88,7 @@ final class GCounter private[akka] (
         case Some(v) ⇒ v + n
         case None    ⇒ n
       }
-      val newDelta = _delta match {
+      val newDelta = delta match {
         case None    ⇒ new GCounter(Map(key → nextValue))
         case Some(d) ⇒ new GCounter(d.state + (key → nextValue))
       }
@@ -108,10 +110,9 @@ final class GCounter private[akka] (
       new GCounter(merged)
     }
 
-  override def delta: GCounter = _delta match {
-    case Some(d) ⇒ d
-    case None    ⇒ GCounter.empty
-  }
+  override def mergeDelta(thatDelta: GCounter): GCounter = merge(thatDelta)
+
+  override def zero: GCounter = GCounter.empty
 
   override def resetDelta: GCounter = new GCounter(state)
 

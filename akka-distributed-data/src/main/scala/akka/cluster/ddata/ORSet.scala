@@ -4,6 +4,7 @@
 package akka.cluster.ddata
 
 import scala.annotation.tailrec
+import scala.collection.immutable
 
 import akka.cluster.Cluster
 import akka.cluster.UniqueAddress
@@ -36,14 +37,35 @@ object ORSet {
    */
   private[akka]type Dot = VersionVector
 
+  sealed trait DeltaOp extends ReplicatedDelta with RequiresCausalDeliveryOfDeltas
+
   /** INTERNAL API */
-  private[akka] sealed trait DeltaOp
+  private[akka] final case class AddDeltaOp[A](underlying: ORSet[A]) extends DeltaOp {
+    type T = DeltaOp
+
+    override def merge(that: DeltaOp): DeltaOp = that match {
+      case AddDeltaOp(u) ⇒ AddDeltaOp(underlying.merge(u.asInstanceOf[ORSet[A]]))
+      case _             ⇒ ??? // FIXME merge of different delta types, use CompositeDeltaOp
+    }
+
+    override def zero: ORSet[A] = ORSet.empty
+  }
+
   /** INTERNAL API */
-  private[akka] case object NotDeltaOp extends DeltaOp
-  /** INTERNAL API */
-  private[akka] case object AddDeltaOp extends DeltaOp
-  /** INTERNAL API */
-  private[akka] case object RemoveDeltaOp extends DeltaOp
+  private[akka] final case class RemoveDeltaOp[A](underlying: ORSet[A]) extends DeltaOp {
+    type T = DeltaOp
+
+    override def merge(that: DeltaOp): DeltaOp = that match {
+      case RemoveDeltaOp(u) ⇒
+        // FIXME this is probably more complicated
+        RemoveDeltaOp(underlying.merge(u.asInstanceOf[ORSet[A]]))
+      case _ ⇒ ??? // FIXME merge of different delta types, use CompositeDeltaOp
+    }
+
+    override def zero: ORSet[A] = ORSet.empty
+  }
+  // FIXME we could use something like
+  // final case class CompositeDeltaOp[A](ops: immutable.IndexedSeq[DeltaOp]) extends DeltaOp
 
   /**
    * INTERNAL API
@@ -211,14 +233,14 @@ object ORSet {
 final class ORSet[A] private[akka] (
   private[akka] val elementsMap: Map[A, ORSet.Dot],
   private[akka] val vvector:     VersionVector,
-  private[akka] val _delta:      Option[ORSet[A]]  = None,
-  private[akka] val deltaOp:     ORSet.DeltaOp     = ORSet.NotDeltaOp)
-  extends DeltaReplicatedData with RequiresCausalDeliveryOfDeltas
+  override val delta:            Option[ORSet.DeltaOp] = None)
+  extends DeltaReplicatedData
   with ReplicatedDataSerialization with RemovedNodePruning with FastMerge {
 
   import ORSet.{ AddDeltaOp, RemoveDeltaOp }
 
   type T = ORSet[A]
+  type D = ORSet.DeltaOp
 
   /**
    * Scala API
@@ -255,13 +277,17 @@ final class ORSet[A] private[akka] (
   private[akka] def add(node: UniqueAddress, element: A): ORSet[A] = {
     val newVvector = vvector + node
     val newDot = VersionVector(node, newVvector.versionAt(node))
-    val newDelta = _delta match {
-      case None ⇒ new ORSet(Map(element → newDot), newDot, deltaOp = AddDeltaOp)
+    val newDelta = delta match {
+      case None ⇒
+        Some(ORSet.AddDeltaOp(new ORSet(Map(element → newDot), newDot)))
+      case Some(existing: ORSet.AddDeltaOp[A]) ⇒
+        // FIXME is this always correct?
+        Some(ORSet.AddDeltaOp(new ORSet(existing.underlying.elementsMap.updated(element, newDot), newDot)))
       case Some(d) ⇒
-        // FIXME handle merge/accumulation of deltas
-        new ORSet(d.elementsMap.updated(element, newDot), newDot, deltaOp = AddDeltaOp)
+        // FIXME maybe handle merge/accumulation of deltas
+        None
     }
-    assignAncestor(new ORSet(elementsMap.updated(element, newDot), newVvector, Some(newDelta)))
+    assignAncestor(new ORSet(elementsMap.updated(element, newDot), newVvector, newDelta))
   }
 
   /**
@@ -280,7 +306,7 @@ final class ORSet[A] private[akka] (
   private[akka] def remove(node: UniqueAddress, element: A): ORSet[A] = {
     // FIXME handle existing delta
     val deltaDot = VersionVector(node, vvector.versionAt(node))
-    val newDelta = new ORSet(Map(element → deltaDot), vvector, deltaOp = RemoveDeltaOp)
+    val newDelta = ORSet.RemoveDeltaOp(new ORSet(Map(element → deltaDot), vvector))
     assignAncestor(copy(elementsMap = elementsMap - element, delta = Some(newDelta)))
   }
 
@@ -311,9 +337,7 @@ final class ORSet[A] private[akka] (
    * Keep only common dots, and dots that are not dominated by the other sides version vector
    */
   override def merge(that: ORSet[A]): ORSet[A] = {
-    if (that.deltaOp == AddDeltaOp) mergeAddDelta(that)
-    else if (that.deltaOp == RemoveDeltaOp) mergeRemoveDelta(that)
-    else if ((this eq that) || that.isAncestorOf(this)) this.clearAncestor()
+    if ((this eq that) || that.isAncestorOf(this)) this.clearAncestor()
     else if (this.isAncestorOf(that)) that.clearAncestor()
     else {
       val commonKeys =
@@ -333,7 +357,16 @@ final class ORSet[A] private[akka] (
     }
   }
 
-  private def mergeAddDelta(that: ORSet[A]): ORSet[A] = {
+  override def mergeDelta(thatDelta: ORSet.DeltaOp): ORSet[A] = {
+    thatDelta match {
+      case d: ORSet.AddDeltaOp[A]    ⇒ mergeAddDelta(d)
+      case d: ORSet.RemoveDeltaOp[A] ⇒ mergeRemoveDelta(d)
+      case _                         ⇒ ??? // FIXME Composite
+    }
+  }
+
+  private def mergeAddDelta(thatDelta: ORSet.AddDeltaOp[A]): ORSet[A] = {
+    val that = thatDelta.underlying
     val commonKeys =
       if (this.elementsMap.size < that.elementsMap.size)
         this.elementsMap.keysIterator.filter(that.elementsMap.contains)
@@ -352,7 +385,8 @@ final class ORSet[A] private[akka] (
     new ORSet(entries, mergedVvector)
   }
 
-  private def mergeRemoveDelta(that: ORSet[A]): ORSet[A] = {
+  private def mergeRemoveDelta(thatDelta: ORSet.RemoveDeltaOp[A]): ORSet[A] = {
+    val that = thatDelta.underlying
     val (elem, thatDot) = that.elementsMap.head
     val newElementsMap = elementsMap.get(elem) match {
       case Some(thisDot) ⇒
@@ -364,11 +398,6 @@ final class ORSet[A] private[akka] (
     clearAncestor()
     val newVvector = vvector.merge(that.vvector)
     new ORSet(newElementsMap, newVvector)
-  }
-
-  override def delta: ORSet[A] = _delta match {
-    case Some(d) ⇒ d
-    case None    ⇒ ORSet.empty
   }
 
   override def resetDelta: ORSet[A] = new ORSet(elementsMap, vvector)
@@ -406,7 +435,7 @@ final class ORSet[A] private[akka] (
   }
 
   private def copy(elementsMap: Map[A, ORSet.Dot] = this.elementsMap, vvector: VersionVector = this.vvector,
-                   delta: Option[ORSet[A]] = this._delta): ORSet[A] =
+                   delta: Option[ORSet.DeltaOp] = this.delta): ORSet[A] =
     new ORSet(elementsMap, vvector, delta)
 
   // this class cannot be a `case class` because we need different `unapply`

@@ -227,25 +227,32 @@ class ORSetSpec extends WordSpec with Matchers {
   }
 
   "ORSet deltas" must {
+
+    def addDeltaOp(s: ORSet[String]): ORSet.AddDeltaOp[String] =
+      s.delta match {
+        case Some(d: ORSet.AddDeltaOp[String] @unchecked) ⇒ d
+        case _ ⇒ throw new IllegalArgumentException("Expected AddDeltaOp")
+      }
+
     "work for additions" in {
       val s1 = ORSet.empty[String]
       val s2 = s1.add(node1, "a")
-      s2.delta.elements should ===(Set("a"))
-      s1.merge(s2.delta) should ===(s2)
+      addDeltaOp(s2).underlying.elements should ===(Set("a"))
+      s1.mergeDelta(s2.delta.get) should ===(s2)
 
       val s3 = s2.resetDelta.add(node1, "b").add(node1, "c")
-      s3.delta.elements should ===(Set("b", "c"))
-      s2.merge(s3.delta) should ===(s3)
+      addDeltaOp(s3).underlying.elements should ===(Set("b", "c"))
+      s2.mergeDelta(s3.delta.get) should ===(s3)
 
       // another node adds "d"
       val s4 = s3.resetDelta.add(node2, "d")
-      s4.delta.elements should ===(Set("d"))
-      s3.merge(s4.delta) should ===(s4)
+      addDeltaOp(s4).underlying.elements should ===(Set("d"))
+      s3.mergeDelta(s4.delta.get) should ===(s4)
 
       // concurrent update
       val s5 = s3.resetDelta.add(node1, "e")
       val s6 = s5.merge(s4)
-      s5.merge(s4.delta) should ===(s6)
+      s5.mergeDelta(s4.delta.get) should ===(s6)
 
       // concurrent add of same element
       val s7 = s3.resetDelta.add(node1, "d")
@@ -254,8 +261,8 @@ class ORSetSpec extends WordSpec with Matchers {
       s8.elementsMap("d").contains(node1)
       s8.elementsMap("d").contains(node2)
       // and same result when merging the deltas
-      s7.merge(s4.delta) should ===(s8)
-      s4.merge(s7.delta) should ===(s8)
+      s7.mergeDelta(s4.delta.get) should ===(s8)
+      s4.mergeDelta(s7.delta.get) should ===(s8)
     }
 
     "handle another concurrent add scenario" in {
@@ -268,7 +275,7 @@ class ORSetSpec extends WordSpec with Matchers {
       val s5 = s4.merge(s3)
       s5.elements should ===(Set("a", "b", "c"))
 
-      val s6 = s4.merge(s3.delta)
+      val s6 = s4.mergeDelta(s3.delta.get)
       s6.elements should ===(Set("a", "b", "c"))
     }
 
@@ -279,20 +286,20 @@ class ORSetSpec extends WordSpec with Matchers {
       val s2 = s1.add(node1, "a").add(node1, "b").resetDelta
       val s3 = s2.remove(node1, "b")
       s2.merge(s3) should ===(s3)
-      s2.merge(s3.delta) should ===(s3)
-      s2.merge(s3.delta).elements should ===(Set("a"))
+      s2.mergeDelta(s3.delta.get) should ===(s3)
+      s2.mergeDelta(s3.delta.get).elements should ===(Set("a"))
 
       // concurrent update
       val s4 = s2.add(node2, "c").resetDelta
       val s5 = s4.merge(s3)
       s5.elements should ===(Set("a", "c"))
-      s4.merge(s3.delta) should ===(s5)
+      s4.mergeDelta(s3.delta.get) should ===(s5)
 
       // add "b" again
       val s6 = s5.add(node2, "b")
       // merging the old delta should not remove it
-      s6.merge(s3.delta) should ===(s6)
-      s6.merge(s3.delta).elements should ===(Set("a", "b", "c"))
+      s6.mergeDelta(s3.delta.get) should ===(s6)
+      s6.mergeDelta(s3.delta.get).elements should ===(Set("a", "b", "c"))
     }
 
     "require causal delivery of deltas" in {
@@ -310,11 +317,11 @@ class ORSetSpec extends WordSpec with Matchers {
       val s21 = s0.resetDelta.add(node2, "d")
 
       // node3 receives delta for "d" and "c", but the delta for "b" is lost
-      val s31 = s0 merge s21.delta merge s12.delta
+      val s31 = s0 mergeDelta s21.delta.get mergeDelta s12.delta.get
       s31.elements should ===(Set("a", "c", "d"))
 
       // node4 receives all deltas
-      val s41 = s0 merge s11.delta merge s12.delta merge s21.delta
+      val s41 = s0 mergeDelta s11.delta.get mergeDelta s12.delta.get mergeDelta s21.delta.get
       s41.elements should ===(Set("a", "b", "c", "d"))
 
       // node3 and node4 sync with full state gossip

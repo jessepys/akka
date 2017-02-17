@@ -25,7 +25,6 @@ import scala.collection.immutable.TreeMap
 import akka.cluster.UniqueAddress
 import java.io.NotSerializableException
 import akka.cluster.ddata.protobuf.msg.ReplicatorMessages.OtherMessage
-import akka.cluster.ddata.ORSet.NotDeltaOp
 
 private object ReplicatedDataSerializer {
   /*
@@ -164,6 +163,8 @@ class ReplicatedDataSerializer(val system: ExtendedActorSystem)
   private val GSetKeyManifest = "b"
   private val ORSetManifest = "C"
   private val ORSetKeyManifest = "c"
+  private val ORSetAddManifest = "Ca"
+  private val ORSetRemoveManifest = "Cr"
   private val FlagManifest = "D"
   private val FlagKeyManifest = "d"
   private val LWWRegisterManifest = "E"
@@ -185,6 +186,8 @@ class ReplicatedDataSerializer(val system: ExtendedActorSystem)
   private val fromBinaryMap = collection.immutable.HashMap[String, Array[Byte] ⇒ AnyRef](
     GSetManifest → gsetFromBinary,
     ORSetManifest → orsetFromBinary,
+    ORSetAddManifest → orsetAddFromBinary,
+    ORSetRemoveManifest → orsetRemoveFromBinary,
     FlagManifest → flagFromBinary,
     LWWRegisterManifest → lwwRegisterFromBinary,
     GCounterManifest → gcounterFromBinary,
@@ -208,48 +211,52 @@ class ReplicatedDataSerializer(val system: ExtendedActorSystem)
     ORMultiMapKeyManifest → (bytes ⇒ ORMultiMapKey(keyIdFromBinary(bytes))))
 
   override def manifest(obj: AnyRef): String = obj match {
-    case _: ORSet[_]            ⇒ ORSetManifest
-    case _: GSet[_]             ⇒ GSetManifest
-    case _: GCounter            ⇒ GCounterManifest
-    case _: PNCounter           ⇒ PNCounterManifest
-    case _: Flag                ⇒ FlagManifest
-    case _: LWWRegister[_]      ⇒ LWWRegisterManifest
-    case _: ORMap[_, _]         ⇒ ORMapManifest
-    case _: LWWMap[_, _]        ⇒ LWWMapManifest
-    case _: PNCounterMap[_]     ⇒ PNCounterMapManifest
-    case _: ORMultiMap[_, _]    ⇒ ORMultiMapManifest
-    case DeletedData            ⇒ DeletedDataManifest
-    case _: VersionVector       ⇒ VersionVectorManifest
+    case _: ORSet[_]               ⇒ ORSetManifest
+    case _: ORSet.AddDeltaOp[_]    ⇒ ORSetAddManifest
+    case _: ORSet.RemoveDeltaOp[_] ⇒ ORSetRemoveManifest
+    case _: GSet[_]                ⇒ GSetManifest
+    case _: GCounter               ⇒ GCounterManifest
+    case _: PNCounter              ⇒ PNCounterManifest
+    case _: Flag                   ⇒ FlagManifest
+    case _: LWWRegister[_]         ⇒ LWWRegisterManifest
+    case _: ORMap[_, _]            ⇒ ORMapManifest
+    case _: LWWMap[_, _]           ⇒ LWWMapManifest
+    case _: PNCounterMap[_]        ⇒ PNCounterMapManifest
+    case _: ORMultiMap[_, _]       ⇒ ORMultiMapManifest
+    case DeletedData               ⇒ DeletedDataManifest
+    case _: VersionVector          ⇒ VersionVectorManifest
 
-    case _: ORSetKey[_]         ⇒ ORSetKeyManifest
-    case _: GSetKey[_]          ⇒ GSetKeyManifest
-    case _: GCounterKey         ⇒ GCounterKeyManifest
-    case _: PNCounterKey        ⇒ PNCounterKeyManifest
-    case _: FlagKey             ⇒ FlagKeyManifest
-    case _: LWWRegisterKey[_]   ⇒ LWWRegisterKeyManifest
-    case _: ORMapKey[_, _]      ⇒ ORMapKeyManifest
-    case _: LWWMapKey[_, _]     ⇒ LWWMapKeyManifest
-    case _: PNCounterMapKey[_]  ⇒ PNCounterMapKeyManifest
-    case _: ORMultiMapKey[_, _] ⇒ ORMultiMapKeyManifest
+    case _: ORSetKey[_]            ⇒ ORSetKeyManifest
+    case _: GSetKey[_]             ⇒ GSetKeyManifest
+    case _: GCounterKey            ⇒ GCounterKeyManifest
+    case _: PNCounterKey           ⇒ PNCounterKeyManifest
+    case _: FlagKey                ⇒ FlagKeyManifest
+    case _: LWWRegisterKey[_]      ⇒ LWWRegisterKeyManifest
+    case _: ORMapKey[_, _]         ⇒ ORMapKeyManifest
+    case _: LWWMapKey[_, _]        ⇒ LWWMapKeyManifest
+    case _: PNCounterMapKey[_]     ⇒ PNCounterMapKeyManifest
+    case _: ORMultiMapKey[_, _]    ⇒ ORMultiMapKeyManifest
 
     case _ ⇒
       throw new IllegalArgumentException(s"Can't serialize object of type ${obj.getClass} in [${getClass.getName}]")
   }
 
   def toBinary(obj: AnyRef): Array[Byte] = obj match {
-    case m: ORSet[_]         ⇒ compress(orsetToProto(m))
-    case m: GSet[_]          ⇒ gsetToProto(m).toByteArray
-    case m: GCounter         ⇒ gcounterToProto(m).toByteArray
-    case m: PNCounter        ⇒ pncounterToProto(m).toByteArray
-    case m: Flag             ⇒ flagToProto(m).toByteArray
-    case m: LWWRegister[_]   ⇒ lwwRegisterToProto(m).toByteArray
-    case m: ORMap[_, _]      ⇒ compress(ormapToProto(m))
-    case m: LWWMap[_, _]     ⇒ compress(lwwmapToProto(m))
-    case m: PNCounterMap[_]  ⇒ compress(pncountermapToProto(m))
-    case m: ORMultiMap[_, _] ⇒ compress(multimapToProto(m))
-    case DeletedData         ⇒ dm.Empty.getDefaultInstance.toByteArray
-    case m: VersionVector    ⇒ versionVectorToProto(m).toByteArray
-    case Key(id)             ⇒ keyIdToBinary(id)
+    case m: ORSet[_]               ⇒ compress(orsetToProto(m))
+    case m: ORSet.AddDeltaOp[_]    ⇒ orsetToProto(m.underlying).toByteArray
+    case m: ORSet.RemoveDeltaOp[_] ⇒ orsetToProto(m.underlying).toByteArray
+    case m: GSet[_]                ⇒ gsetToProto(m).toByteArray
+    case m: GCounter               ⇒ gcounterToProto(m).toByteArray
+    case m: PNCounter              ⇒ pncounterToProto(m).toByteArray
+    case m: Flag                   ⇒ flagToProto(m).toByteArray
+    case m: LWWRegister[_]         ⇒ lwwRegisterToProto(m).toByteArray
+    case m: ORMap[_, _]            ⇒ compress(ormapToProto(m))
+    case m: LWWMap[_, _]           ⇒ compress(lwwmapToProto(m))
+    case m: PNCounterMap[_]        ⇒ compress(pncountermapToProto(m))
+    case m: ORMultiMap[_, _]       ⇒ compress(multimapToProto(m))
+    case DeletedData               ⇒ dm.Empty.getDefaultInstance.toByteArray
+    case m: VersionVector          ⇒ versionVectorToProto(m).toByteArray
+    case Key(id)                   ⇒ keyIdToBinary(id)
     case _ ⇒
       throw new IllegalArgumentException(s"Can't serialize object of type ${obj.getClass} in [${getClass.getName}]")
   }
@@ -357,17 +364,17 @@ class ReplicatedDataSerializer(val system: ExtendedActorSystem)
       addDots(otherElements)
     }
 
-    orset.deltaOp match {
-      case ORSet.NotDeltaOp    ⇒ // optional, unset
-      case ORSet.AddDeltaOp    ⇒ b.setDeltaOp(rd.ORSetDeltaOp.Add)
-      case ORSet.RemoveDeltaOp ⇒ b.setDeltaOp(rd.ORSetDeltaOp.Remove)
-    }
-
     b.build()
   }
 
   def orsetFromBinary(bytes: Array[Byte]): ORSet[Any] =
     orsetFromProto(rd.ORSet.parseFrom(decompress(bytes)))
+
+  def orsetAddFromBinary(bytes: Array[Byte]): ORSet.AddDeltaOp[Any] =
+    new ORSet.AddDeltaOp(orsetFromProto(rd.ORSet.parseFrom(bytes)))
+
+  def orsetRemoveFromBinary(bytes: Array[Byte]): ORSet.RemoveDeltaOp[Any] =
+    new ORSet.RemoveDeltaOp(orsetFromProto(rd.ORSet.parseFrom(bytes)))
 
   def orsetFromProto(orset: rd.ORSet): ORSet[Any] = {
     val elements: Iterator[Any] =
@@ -379,14 +386,7 @@ class ReplicatedDataSerializer(val system: ExtendedActorSystem)
     val dots = orset.getDotsList.asScala.map(versionVectorFromProto).iterator
     val elementsMap = elements.zip(dots).toMap
 
-    val deltaOp =
-      if (orset.hasDeltaOp) {
-        if (orset.getDeltaOp == rd.ORSetDeltaOp.Add) ORSet.AddDeltaOp
-        else if (orset.getDeltaOp == rd.ORSetDeltaOp.Remove) ORSet.RemoveDeltaOp
-        else ORSet.NotDeltaOp
-      } else ORSet.NotDeltaOp
-
-    new ORSet(elementsMap, vvector = versionVectorFromProto(orset.getVvector), deltaOp = deltaOp)
+    new ORSet(elementsMap, vvector = versionVectorFromProto(orset.getVvector))
   }
 
   def flagToProto(flag: Flag): rd.Flag =

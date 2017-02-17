@@ -3,9 +3,11 @@
  */
 package akka.cluster.ddata;
 
+
 import akka.cluster.UniqueAddress;
 
-public class JavaImplOfDeltaReplicatedData extends AbstractDeltaReplicatedData<JavaImplOfDeltaReplicatedData> implements
+// FIXME Java API of delta
+abstract public class JavaImplOfDeltaReplicatedData extends AbstractDeltaReplicatedData<JavaImplOfDeltaReplicatedData> implements
     RemovedNodePruning {
 
   @Override
@@ -13,10 +15,11 @@ public class JavaImplOfDeltaReplicatedData extends AbstractDeltaReplicatedData<J
     return this;
   }
 
-  @Override
-  public JavaImplOfDeltaReplicatedData delta() {
-    return this;
-  }
+// FIXME
+//  @Override
+//  public Option<JavaImplOfDeltaReplicatedData> delta() {
+//    return Option.empty();
+//  }
 
   @Override
   public JavaImplOfDeltaReplicatedData resetDelta() {

@@ -53,6 +53,13 @@ trait ReplicatedData {
 trait DeltaReplicatedData extends ReplicatedData {
 
   /**
+   * The type of the delta. To be specified by subclass.
+   * It may be the same type as `T` or a different type if needed.
+   * For example `GSet` uses the same type and `ORSet` uses different types.
+   */
+  type D <: ReplicatedDelta
+
+  /**
    * The accumulated delta of mutator operations since previous
    * [[#resetDelta]]. When the `Replicator` invokes the `modify` function
    * of the `Update` message and the user code is invoking one or more mutator
@@ -61,7 +68,14 @@ trait DeltaReplicatedData extends ReplicatedData {
    * `modify` function shall still return the full state in the same way as
    * `ReplicatedData` without support for deltas.
    */
-  def delta: T
+  def delta: Option[D]
+
+  /**
+   * When delta is merged into the full state this method is used.
+   * When the type `D` of the delta is of the same type as the full state `T`
+   * this method can be implemented by delegating to `merge`.
+   */
+  def mergeDelta(thatDelta: D): T
 
   /**
    * Reset collection of deltas from mutator operations. When the `Replicator`
@@ -77,9 +91,23 @@ trait DeltaReplicatedData extends ReplicatedData {
 }
 
 /**
- * Marker that specifies that the deltas must be applied in causal order.
+ * The delta must implement this type.
  */
-trait RequiresCausalDeliveryOfDeltas extends DeltaReplicatedData
+trait ReplicatedDelta extends ReplicatedData {
+  /**
+   * The empty full state. This is used when a delta is received
+   * and no existing full state exists on the receiving side. Then
+   * the delta is merged into the `zero` to create the initial full state.
+   */
+  def zero: DeltaReplicatedData
+}
+
+/**
+ * Marker that specifies that the deltas must be applied in causal order.
+ * Note that if the full state type `T` is different from the delta type `D`
+ * it is the delta `D` that should be marked with this.
+ */
+trait RequiresCausalDeliveryOfDeltas extends ReplicatedDelta
 
 /**
  * Java API: Interface for implementing a [[ReplicatedData]] in Java.
@@ -114,6 +142,10 @@ abstract class AbstractReplicatedData[D <: AbstractReplicatedData[D]] extends Re
  */
 abstract class AbstractDeltaReplicatedData[D <: AbstractDeltaReplicatedData[D]]
   extends AbstractReplicatedData[D] with DeltaReplicatedData {
+
+  override type D = ReplicatedDelta
+
+  // FIXME methods for delta Java API
 }
 
 /**

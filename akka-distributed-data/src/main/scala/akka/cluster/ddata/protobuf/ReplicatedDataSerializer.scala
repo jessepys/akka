@@ -25,6 +25,7 @@ import scala.collection.immutable.TreeMap
 import akka.cluster.UniqueAddress
 import java.io.NotSerializableException
 import akka.cluster.ddata.protobuf.msg.ReplicatorMessages.OtherMessage
+import akka.cluster.ddata.ORSet.DeltaOp
 
 private object ReplicatedDataSerializer {
   /*
@@ -165,6 +166,7 @@ class ReplicatedDataSerializer(val system: ExtendedActorSystem)
   private val ORSetKeyManifest = "c"
   private val ORSetAddManifest = "Ca"
   private val ORSetRemoveManifest = "Cr"
+  private val ORSetDeltaGroupManifest = "Cg"
   private val FlagManifest = "D"
   private val FlagKeyManifest = "d"
   private val LWWRegisterManifest = "E"
@@ -188,6 +190,7 @@ class ReplicatedDataSerializer(val system: ExtendedActorSystem)
     ORSetManifest → orsetFromBinary,
     ORSetAddManifest → orsetAddFromBinary,
     ORSetRemoveManifest → orsetRemoveFromBinary,
+    ORSetDeltaGroupManifest → orsetDeltaGroupFromBinary,
     FlagManifest → flagFromBinary,
     LWWRegisterManifest → lwwRegisterFromBinary,
     GCounterManifest → gcounterFromBinary,
@@ -237,6 +240,8 @@ class ReplicatedDataSerializer(val system: ExtendedActorSystem)
     case _: PNCounterMapKey[_]     ⇒ PNCounterMapKeyManifest
     case _: ORMultiMapKey[_, _]    ⇒ ORMultiMapKeyManifest
 
+    case _: ORSet.DeltaGroup[_]    ⇒ ORSetDeltaGroupManifest
+
     case _ ⇒
       throw new IllegalArgumentException(s"Can't serialize object of type ${obj.getClass} in [${getClass.getName}]")
   }
@@ -257,6 +262,7 @@ class ReplicatedDataSerializer(val system: ExtendedActorSystem)
     case DeletedData               ⇒ dm.Empty.getDefaultInstance.toByteArray
     case m: VersionVector          ⇒ versionVectorToProto(m).toByteArray
     case Key(id)                   ⇒ keyIdToBinary(id)
+    case m: ORSet.DeltaGroup[_]    ⇒ orsetDeltaGroupToProto(m).toByteArray
     case _ ⇒
       throw new IllegalArgumentException(s"Can't serialize object of type ${obj.getClass} in [${getClass.getName}]")
   }
@@ -370,11 +376,44 @@ class ReplicatedDataSerializer(val system: ExtendedActorSystem)
   def orsetFromBinary(bytes: Array[Byte]): ORSet[Any] =
     orsetFromProto(rd.ORSet.parseFrom(decompress(bytes)))
 
-  def orsetAddFromBinary(bytes: Array[Byte]): ORSet.AddDeltaOp[Any] =
+  private def orsetAddFromBinary(bytes: Array[Byte]): ORSet.AddDeltaOp[Any] =
     new ORSet.AddDeltaOp(orsetFromProto(rd.ORSet.parseFrom(bytes)))
 
-  def orsetRemoveFromBinary(bytes: Array[Byte]): ORSet.RemoveDeltaOp[Any] =
+  private def orsetRemoveFromBinary(bytes: Array[Byte]): ORSet.RemoveDeltaOp[Any] =
     new ORSet.RemoveDeltaOp(orsetFromProto(rd.ORSet.parseFrom(bytes)))
+
+  private def orsetDeltaGroupToProto(deltaGroup: ORSet.DeltaGroup[_]): rd.ORSetDeltaGroup = {
+    val b = rd.ORSetDeltaGroup.newBuilder()
+    deltaGroup.ops.foreach {
+      case ORSet.AddDeltaOp(u) ⇒
+        val entry = rd.ORSetDeltaGroup.Entry.newBuilder()
+          .setOperation(rd.ORSetDeltaOp.Add)
+          .setUnderlying(orsetToProto(u))
+        b.addEntries(entry)
+      case ORSet.RemoveDeltaOp(u) ⇒
+        val entry = rd.ORSetDeltaGroup.Entry.newBuilder()
+          .setOperation(rd.ORSetDeltaOp.Remove)
+          .setUnderlying(orsetToProto(u))
+        b.addEntries(entry)
+      case ORSet.DeltaGroup(u) ⇒
+        throw new IllegalArgumentException("ORSet.DeltaGroup should not be nested")
+    }
+    b.build()
+  }
+
+  private def orsetDeltaGroupFromBinary(bytes: Array[Byte]): ORSet.DeltaGroup[Any] = {
+    val deltaGroup = rd.ORSetDeltaGroup.parseFrom(bytes)
+    val ops: Vector[ORSet.DeltaOp] =
+      deltaGroup.getEntriesList.asScala.map { entry ⇒
+        if (entry.getOperation == rd.ORSetDeltaOp.Add)
+          ORSet.AddDeltaOp(orsetFromProto(entry.getUnderlying))
+        else if (entry.getOperation == rd.ORSetDeltaOp.Remove)
+          ORSet.RemoveDeltaOp(orsetFromProto(entry.getUnderlying))
+        else
+          throw new NotSerializableException(s"Unknow ORSet delta operation ${entry.getOperation}")
+      }(collection.breakOut)
+    ORSet.DeltaGroup(ops)
+  }
 
   def orsetFromProto(orset: rd.ORSet): ORSet[Any] = {
     val elements: Iterator[Any] =

@@ -23,6 +23,20 @@ message ORSet {
   repeated OtherMessage otherElements = 6;
 }
 
+message ORSetDeltaGroup {
+  message Entry {
+    required ORSetDeltaOp operation = 1;
+    required ORSet underlying = 2;
+  }
+  
+  repeated Entry entries = 1;
+}
+
+enum ORSetDeltaOp {
+  Add = 0;
+  Remove = 1;
+}
+
 message Flag {
   required bool enabled = 1;
 }

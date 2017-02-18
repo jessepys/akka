@@ -37,12 +37,14 @@ object ORSet {
    */
   private[akka]type Dot = VersionVector
 
-  sealed trait DeltaOp extends ReplicatedDelta with RequiresCausalDeliveryOfDeltas
+  sealed trait DeltaOp extends ReplicatedDelta with RequiresCausalDeliveryOfDeltas {
+    type T = DeltaOp
+  }
 
   /**
    * INTERNAL API
    */
-  private[akka] abstract class DeltaOpBase[A] extends DeltaOp with RemovedNodePruning {
+  private[akka] sealed abstract class DeltaOpBase[A] extends DeltaOp with RemovedNodePruning {
     def underlying: ORSet[A]
 
     override def zero: ORSet[A] = ORSet.empty
@@ -60,11 +62,14 @@ object ORSet {
 
   /** INTERNAL API */
   private[akka] final case class AddDeltaOp[A](underlying: ORSet[A]) extends DeltaOpBase[A] {
-    type T = DeltaOp
 
     override def merge(that: DeltaOp): DeltaOp = that match {
-      case AddDeltaOp(u) ⇒ AddDeltaOp(underlying.merge(u.asInstanceOf[ORSet[A]]))
-      case _             ⇒ ??? // FIXME merge of different delta types, use CompositeDeltaOp
+      case AddDeltaOp(u) ⇒
+        // FIXME is this always correct?
+        // Note that we only merge deltas originating from the same node
+        AddDeltaOp(new ORSet(underlying.elementsMap ++ u.elementsMap, underlying.vvector.merge(u.vvector)))
+      case _: RemoveDeltaOp[A] ⇒ DeltaGroup(Vector(this, that))
+      case DeltaGroup(ops)     ⇒ DeltaGroup(this +: ops)
     }
 
     override def pruningCleanup(removedNode: UniqueAddress): AddDeltaOp[A] =
@@ -73,20 +78,51 @@ object ORSet {
 
   /** INTERNAL API */
   private[akka] final case class RemoveDeltaOp[A](underlying: ORSet[A]) extends DeltaOpBase[A] {
-    type T = DeltaOp
 
     override def merge(that: DeltaOp): DeltaOp = that match {
-      case RemoveDeltaOp(u) ⇒
-        // FIXME this is probably more complicated
-        RemoveDeltaOp(underlying.merge(u.asInstanceOf[ORSet[A]]))
-      case _ ⇒ ??? // FIXME merge of different delta types, use CompositeDeltaOp
+      case _: DeltaOpBase[A] ⇒ DeltaGroup(Vector(this, that)) // keep it simple for removals
+      case DeltaGroup(ops)   ⇒ DeltaGroup(this +: ops)
     }
 
     override def pruningCleanup(removedNode: UniqueAddress): RemoveDeltaOp[A] =
       RemoveDeltaOp(underlying.pruningCleanup(removedNode))
   }
-  // FIXME we could use something like
-  // final case class CompositeDeltaOp[A](ops: immutable.IndexedSeq[DeltaOp]) extends DeltaOp
+
+  final case class DeltaGroup[A](ops: immutable.IndexedSeq[DeltaOp]) extends DeltaOp with RemovedNodePruning {
+    override def merge(that: DeltaOp): DeltaOp = that match {
+      case thatAdd: AddDeltaOp[A] ⇒
+        // merge AddDeltaOp into last AddDeltaOp in the group, if possible
+        ops.last match {
+          case thisAdd: AddDeltaOp[A] ⇒ DeltaGroup(ops.dropRight(1) :+ thisAdd.merge(thatAdd))
+          case _                      ⇒ DeltaGroup(ops :+ thatAdd)
+        }
+      case DeltaGroup(thatOps) ⇒ DeltaGroup(ops ++ thatOps)
+      case _                   ⇒ DeltaGroup(ops :+ that)
+    }
+
+    override def zero: ORSet[A] = ORSet.empty
+
+    override def modifiedByNodes: Set[UniqueAddress] =
+      ops.flatMap {
+        case p: RemovedNodePruning ⇒ p.modifiedByNodes
+        case _                     ⇒ Set.empty[UniqueAddress]
+      }(collection.breakOut)
+
+    override def needPruningFrom(removedNode: UniqueAddress): Boolean =
+      ops.exists {
+        case p: RemovedNodePruning ⇒ p.needPruningFrom(removedNode)
+        case _                     ⇒ false
+      }
+
+    override def pruningCleanup(removedNode: UniqueAddress): DeltaGroup[A] =
+      DeltaGroup(ops.map {
+        case p: RemovedNodePruning ⇒ p.pruningCleanup(removedNode)
+        case other                 ⇒ other
+      })
+
+    override def prune(removedNode: UniqueAddress, collapseInto: UniqueAddress): DeltaGroup[A] =
+      throw new UnsupportedOperationException("prune not expected on delta")
+  }
 
   /**
    * INTERNAL API
@@ -300,15 +336,13 @@ final class ORSet[A] private[akka] (
     val newDot = VersionVector(node, newVvector.versionAt(node))
     val newDelta = delta match {
       case None ⇒
-        Some(ORSet.AddDeltaOp(new ORSet(Map(element → newDot), newDot)))
+        ORSet.AddDeltaOp(new ORSet(Map(element → newDot), newDot))
       case Some(existing: ORSet.AddDeltaOp[A]) ⇒
-        // FIXME is this always correct?
-        Some(ORSet.AddDeltaOp(new ORSet(existing.underlying.elementsMap.updated(element, newDot), newDot)))
+        existing.merge(ORSet.AddDeltaOp(new ORSet(Map(element → newDot), newDot)))
       case Some(d) ⇒
-        // FIXME maybe handle merge/accumulation of deltas
-        None
+        d.merge(ORSet.AddDeltaOp(new ORSet(Map(element → newDot), newDot)))
     }
-    assignAncestor(new ORSet(elementsMap.updated(element, newDot), newVvector, newDelta))
+    assignAncestor(new ORSet(elementsMap.updated(element, newDot), newVvector, Some(newDelta)))
   }
 
   /**
@@ -325,9 +359,12 @@ final class ORSet[A] private[akka] (
    * INTERNAL API
    */
   private[akka] def remove(node: UniqueAddress, element: A): ORSet[A] = {
-    // FIXME handle existing delta
     val deltaDot = VersionVector(node, vvector.versionAt(node))
-    val newDelta = ORSet.RemoveDeltaOp(new ORSet(Map(element → deltaDot), vvector))
+    val rmOp = ORSet.RemoveDeltaOp(new ORSet(Map(element → deltaDot), vvector))
+    val newDelta = delta match {
+      case None    ⇒ rmOp
+      case Some(d) ⇒ d.merge(rmOp)
+    }
     assignAncestor(copy(elementsMap = elementsMap - element, delta = Some(newDelta)))
   }
 
@@ -382,7 +419,13 @@ final class ORSet[A] private[akka] (
     thatDelta match {
       case d: ORSet.AddDeltaOp[A]    ⇒ mergeAddDelta(d)
       case d: ORSet.RemoveDeltaOp[A] ⇒ mergeRemoveDelta(d)
-      case _                         ⇒ ??? // FIXME Composite
+      case ORSet.DeltaGroup(ops) ⇒
+        ops.foldLeft(this) {
+          case (acc, op: ORSet.AddDeltaOp[A])    ⇒ acc.mergeAddDelta(op)
+          case (acc, op: ORSet.RemoveDeltaOp[A]) ⇒ acc.mergeRemoveDelta(op)
+          case (acc, op: ORSet.DeltaGroup[A]) ⇒
+            throw new IllegalArgumentException("ORSet.DeltaGroup should not be nested")
+        }
     }
   }
 
@@ -394,9 +437,6 @@ final class ORSet[A] private[akka] (
       else
         that.elementsMap.keysIterator.filter(this.elementsMap.contains)
     val entries00 = ORSet.mergeCommonKeys(commonKeys, this, that)
-    // FIXME
-    //    val thisUniqueKeys = this.elementsMap.keysIterator.filterNot(that.elementsMap.contains)
-    //    val entries0 = ORSet.mergeDisjointKeys(thisUniqueKeys, this.elementsMap, that.vvector, entries00)
     val entries0 = entries00 ++ this.elementsMap.filter { case (elem, _) ⇒ !that.elementsMap.contains(elem) }
     val thatUniqueKeys = that.elementsMap.keysIterator.filterNot(this.elementsMap.contains)
     val entries = ORSet.mergeDisjointKeys(thatUniqueKeys, that.elementsMap, this.vvector, entries0)

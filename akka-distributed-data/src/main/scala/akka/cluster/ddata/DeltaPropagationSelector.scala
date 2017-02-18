@@ -40,7 +40,7 @@ private[akka] trait DeltaPropagationSelector {
       case None    ⇒ 1L
     }
     deltaCounter = deltaCounter.updated(key, version)
-    println(s"# update delta $key [$version] -> $delta") // FIXME
+    //    println(s"# update delta $key [$version] -> $delta") // FIXME
 
     val deltaEntriesForKey = deltaEntries.get(key) match {
       case Some(m) ⇒ m

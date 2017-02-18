@@ -22,6 +22,7 @@ object ReplicatorDeltaSpec extends MultiNodeConfig {
   val fourth = role("fourth")
 
   commonConfig(ConfigFactory.parseString("""
+    akka.loglevel = DEBUG
     akka.actor.provider = "cluster"
     akka.log-dead-letters-during-shutdown = off
     """))
@@ -32,6 +33,8 @@ object ReplicatorDeltaSpec extends MultiNodeConfig {
   final case class Delay(n: Int) extends Op
   final case class Incr(key: PNCounterKey, n: Int, consistency: WriteConsistency) extends Op
   final case class Decr(key: PNCounterKey, n: Int, consistency: WriteConsistency) extends Op
+  final case class Add(key: ORSetKey[String], elem: String, consistency: WriteConsistency) extends Op
+  final case class Remove(key: ORSetKey[String], elem: String, consistency: WriteConsistency) extends Op
 
   val timeout = 5.seconds
   val writeTwo = WriteTo(2, timeout)
@@ -40,6 +43,9 @@ object ReplicatorDeltaSpec extends MultiNodeConfig {
   val KeyA = PNCounterKey("A")
   val KeyB = PNCounterKey("B")
   val KeyC = PNCounterKey("C")
+  val KeyD = ORSetKey[String]("D")
+  val KeyE = ORSetKey[String]("E")
+  val KeyF = ORSetKey[String]("F")
 
   def generateOperations(): Vector[Op] = {
     val rnd = ThreadLocalRandom.current()
@@ -52,7 +58,7 @@ object ReplicatorDeltaSpec extends MultiNodeConfig {
       }
     }
 
-    def key(): PNCounterKey = {
+    def rndPnCounterkey(): PNCounterKey = {
       rnd.nextInt(3) match {
         case 0 ⇒ KeyA
         case 1 ⇒ KeyB
@@ -60,11 +66,43 @@ object ReplicatorDeltaSpec extends MultiNodeConfig {
       }
     }
 
-    (0 to (20 + rnd.nextInt(10))).map { _ ⇒
+    def rndOrSetkey(): ORSetKey[String] = {
       rnd.nextInt(3) match {
+        case 0 ⇒ KeyD
+        case 1 ⇒ KeyE
+        case 2 ⇒ KeyF
+      }
+    }
+
+    var availableForRemove = Set.empty[String]
+
+    def rndAddElement(): String = {
+      // lower case a - j
+      val s = (97 + rnd.nextInt(10)).toChar.toString
+      availableForRemove += s
+      s
+    }
+
+    def rndRemoveElement(): String = {
+      if (availableForRemove.isEmpty)
+        "a"
+      else
+        availableForRemove.toVector(rnd.nextInt(availableForRemove.size))
+    }
+
+    (0 to (30 + rnd.nextInt(10))).map { _ ⇒
+      rnd.nextInt(4) match {
         case 0 ⇒ Delay(rnd.nextInt(500))
-        case 1 ⇒ Incr(key(), rnd.nextInt(100), consistency())
-        case 2 ⇒ Decr(key(), rnd.nextInt(10), consistency())
+        case 1 ⇒ Incr(rndPnCounterkey(), rnd.nextInt(100), consistency())
+        case 2 ⇒ Decr(rndPnCounterkey(), rnd.nextInt(10), consistency())
+        case 3 ⇒
+          // ORSet
+          val key = rndOrSetkey()
+          // only removals for KeyF
+          if (key == KeyF && rnd.nextInt(2) == 1)
+            Remove(key, rndRemoveElement(), consistency())
+          else
+            Add(key, rndAddElement(), consistency())
       }
     }.toVector
   }
@@ -137,20 +175,26 @@ class ReplicatorDeltaSpec extends MultiNodeSpec(ReplicatorDeltaSpec) with STMult
 
       runOn(first) {
         fullStateReplicator ! Update(KeyA, PNCounter.empty, WriteLocal)(_ + 1)
+        fullStateReplicator ! Update(KeyD, ORSet.empty[String], WriteLocal)(_ + "a")
         deltaReplicator ! Update(KeyA, PNCounter.empty, WriteLocal)(_ + 1)
+        deltaReplicator ! Update(KeyD, ORSet.empty[String], WriteLocal)(_ + "a")
       }
       enterBarrier("updated-1")
 
       within(5.seconds) {
         awaitAssert {
           val p = TestProbe()
-          deltaReplicator.tell(Get(KeyA, ReadLocal), p.ref)
+          fullStateReplicator.tell(Get(KeyA, ReadLocal), p.ref)
           p.expectMsgType[GetSuccess[PNCounter]].dataValue.getValue.intValue should be(1)
+          fullStateReplicator.tell(Get(KeyD, ReadLocal), p.ref)
+          p.expectMsgType[GetSuccess[ORSet[String]]].dataValue.elements should ===(Set("a"))
         }
         awaitAssert {
           val p = TestProbe()
           deltaReplicator.tell(Get(KeyA, ReadLocal), p.ref)
           p.expectMsgType[GetSuccess[PNCounter]].dataValue.getValue.intValue should be(1)
+          deltaReplicator.tell(Get(KeyD, ReadLocal), p.ref)
+          p.expectMsgType[GetSuccess[ORSet[String]]].dataValue.elements should ===(Set("a"))
         }
       }
 
@@ -170,10 +214,22 @@ class ReplicatorDeltaSpec extends MultiNodeSpec(ReplicatorDeltaSpec) with STMult
             case Delay(d) ⇒ Thread.sleep(d)
             case Incr(key, n, consistency) ⇒
               fullStateReplicator ! Update(key, PNCounter.empty, consistency)(_ + n)
-              deltaReplicator ! Update(key, PNCounter.empty, WriteLocal)(_ + n)
+              deltaReplicator ! Update(key, PNCounter.empty, consistency)(_ + n)
             case Decr(key, n, consistency) ⇒
               fullStateReplicator ! Update(key, PNCounter.empty, consistency)(_ - n)
-              deltaReplicator ! Update(key, PNCounter.empty, WriteLocal)(_ - n)
+              deltaReplicator ! Update(key, PNCounter.empty, consistency)(_ - n)
+            case Add(key, elem, consistency) ⇒
+              // to have an deterministic result when mixing add/remove we can only perform
+              // the ORSet operations from one node
+              runOn((if (key == KeyF) List(first) else List(first, second, third)): _*) {
+                fullStateReplicator ! Update(key, ORSet.empty[String], consistency)(_ + elem)
+                deltaReplicator ! Update(key, ORSet.empty[String], consistency)(_ + elem)
+              }
+            case Remove(key, elem, consistency) ⇒
+              runOn(first) {
+                fullStateReplicator ! Update(key, ORSet.empty[String], consistency)(_ - elem)
+                deltaReplicator ! Update(key, ORSet.empty[String], consistency)(_ - elem)
+              }
           }
         }
 
@@ -187,6 +243,20 @@ class ReplicatorDeltaSpec extends MultiNodeSpec(ReplicatorDeltaSpec) with STMult
               val fullStateValue = p.expectMsgType[GetSuccess[PNCounter]].dataValue
               deltaReplicator.tell(Get(key, ReadLocal), p.ref)
               val deltaValue = p.expectMsgType[GetSuccess[PNCounter]].dataValue
+              deltaValue should ===(fullStateValue)
+            }
+          }
+        }
+
+        List(KeyD, KeyE, KeyF).foreach { key ⇒
+          within(5.seconds) {
+            awaitAssert {
+              val p = TestProbe()
+              fullStateReplicator.tell(Get(key, ReadLocal), p.ref)
+              val fullStateValue = p.expectMsgType[GetSuccess[ORSet[String]]].dataValue.elements
+              deltaReplicator.tell(Get(key, ReadLocal), p.ref)
+              val deltaValue = p.expectMsgType[GetSuccess[ORSet[String]]].dataValue.elements
+              println(s"# assert key $key $fullStateValue vs $deltaValue") // FIXME
               deltaValue should ===(fullStateValue)
             }
           }

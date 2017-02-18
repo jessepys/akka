@@ -229,9 +229,12 @@ class ORSetSpec extends WordSpec with Matchers {
   "ORSet deltas" must {
 
     def addDeltaOp(s: ORSet[String]): ORSet.AddDeltaOp[String] =
-      s.delta match {
-        case Some(d: ORSet.AddDeltaOp[String] @unchecked) ⇒ d
-        case _ ⇒ throw new IllegalArgumentException("Expected AddDeltaOp")
+      asAddDeltaOp(s.delta.get)
+
+    def asAddDeltaOp(delta: Any): ORSet.AddDeltaOp[String] =
+      delta match {
+        case d: ORSet.AddDeltaOp[String] @unchecked ⇒ d
+        case _                                      ⇒ throw new IllegalArgumentException("Expected AddDeltaOp")
       }
 
     "work for additions" in {
@@ -279,7 +282,33 @@ class ORSetSpec extends WordSpec with Matchers {
       s6.elements should ===(Set("a", "b", "c"))
     }
 
-    // FIXME test merge of the deltas themselves
+    "merge deltas into delta groups" in {
+      val s1 = ORSet.empty[String]
+      val s2 = s1.add(node1, "a")
+      val d2 = s2.delta.get
+      val s3 = s2.resetDelta.add(node1, "b")
+      val d3 = s3.delta.get
+      val d4 = d2 merge d3
+      asAddDeltaOp(d4).underlying.elements should ===(Set("a", "b"))
+      s1.mergeDelta(d4) should ===(s3)
+      s2.mergeDelta(d4) should ===(s3)
+
+      val s5 = s3.resetDelta.remove(node1, "b")
+      val d5 = s5.delta.get
+      val d6 = (d4 merge d5).asInstanceOf[ORSet.DeltaGroup[String]]
+      d6.ops.last.getClass should ===(classOf[ORSet.RemoveDeltaOp[String]])
+      d6.ops.size should ===(2)
+      s3.mergeDelta(d6) should ===(s5)
+
+      val s7 = s5.resetDelta.add(node1, "c")
+      val s8 = s7.resetDelta.add(node1, "d")
+      val d9 = (d6 merge s7.delta.get merge s8.delta.get).asInstanceOf[ORSet.DeltaGroup[String]]
+      // the add "c" and add "d" are merged into one AddDeltaOp
+      asAddDeltaOp(d9.ops.last).underlying.elements should ===(Set("c", "d"))
+      d9.ops.size should ===(3)
+      s5.mergeDelta(d9) should ===(s8)
+      s5.mergeDelta(s7.delta.get).mergeDelta(s8.delta.get) should ===(s8)
+    }
 
     "work for removals" in {
       val s1 = ORSet.empty[String]

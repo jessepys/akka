@@ -114,7 +114,8 @@ final class GCounter private[akka] (
 
   override def zero: GCounter = GCounter.empty
 
-  override def resetDelta: GCounter = new GCounter(state)
+  override def resetDelta: GCounter =
+    assignAncestor(new GCounter(state))
 
   override def modifiedByNodes: Set[UniqueAddress] = state.keySet
 

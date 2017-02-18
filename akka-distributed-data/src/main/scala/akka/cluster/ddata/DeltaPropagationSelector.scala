@@ -85,6 +85,7 @@ private[akka] trait DeltaPropagationSelector {
 
       var result = Map.empty[Address, DeltaPropagation]
 
+      var cache = Map.empty[(String, Long, Long), ReplicatedData]
       slice.foreach { node ⇒
         // collect the deltas that have not already been sent to the node and merge
         // them into a delta group
@@ -95,12 +96,19 @@ private[akka] trait DeltaPropagationSelector {
             val j = deltaSentToNodeForKey.getOrElse(node, 0L)
             val deltaEntriesAfterJ = deltaEntriesAfter(entries, j)
             if (deltaEntriesAfterJ.nonEmpty) {
-              val (fromSeqNr, _) = deltaEntriesAfterJ.head
-              val (toSeqNr, _) = deltaEntriesAfterJ.last
-              // FIXME in most cases the delta group merging will be the same for each node,
-              //       so we should cache that merge in this method
-              val deltaGroup = deltaEntriesAfterJ.valuesIterator.reduceLeft {
-                (d1, d2) ⇒ d1.merge(d2.asInstanceOf[d1.T])
+              val fromSeqNr = deltaEntriesAfterJ.head._1
+              val toSeqNr = deltaEntriesAfterJ.last._1
+              // in most cases the delta group merging will be the same for each node,
+              // so we cache the merged results
+              val cacheKey = (key, fromSeqNr, toSeqNr)
+              val deltaGroup = cache.get(cacheKey) match {
+                case None ⇒
+                  val group = deltaEntriesAfterJ.valuesIterator.reduceLeft {
+                    (d1, d2) ⇒ d1.merge(d2.asInstanceOf[d1.T])
+                  }
+                  cache = cache.updated(cacheKey, group)
+                  group
+                case Some(group) ⇒ group
               }
               deltas = deltas.updated(key, (deltaGroup, fromSeqNr, toSeqNr))
               deltaSentToNode = deltaSentToNode.updated(key, deltaSentToNodeForKey.updated(node, deltaEntriesAfterJ.lastKey))

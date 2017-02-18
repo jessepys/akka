@@ -67,9 +67,19 @@ object ORSet {
       case AddDeltaOp(u) ⇒
         // FIXME is this always correct?
         // Note that we only merge deltas originating from the same node
-        AddDeltaOp(new ORSet(underlying.elementsMap ++ u.elementsMap, underlying.vvector.merge(u.vvector)))
+        AddDeltaOp(new ORSet(
+          concatElementsMap(u.elementsMap.asInstanceOf[Map[A, Dot]]),
+          underlying.vvector.merge(u.vvector)))
       case _: RemoveDeltaOp[A] ⇒ DeltaGroup(Vector(this, that))
       case DeltaGroup(ops)     ⇒ DeltaGroup(this +: ops)
+    }
+
+    private def concatElementsMap(thatMap: Map[A, Dot]): Map[A, Dot] = {
+      if (thatMap.size == 1) {
+        val head = thatMap.head
+        underlying.elementsMap.updated(head._1, head._2)
+      } else
+        underlying.elementsMap ++ thatMap
     }
 
     override def pruningCleanup(removedNode: UniqueAddress): AddDeltaOp[A] =
@@ -461,7 +471,8 @@ final class ORSet[A] private[akka] (
     new ORSet(newElementsMap, newVvector)
   }
 
-  override def resetDelta: ORSet[A] = new ORSet(elementsMap, vvector)
+  override def resetDelta: ORSet[A] =
+    assignAncestor(new ORSet(elementsMap, vvector))
 
   override def modifiedByNodes: Set[UniqueAddress] =
     vvector.modifiedByNodes

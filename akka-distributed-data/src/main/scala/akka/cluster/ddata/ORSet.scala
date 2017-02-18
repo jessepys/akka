@@ -39,8 +39,27 @@ object ORSet {
 
   sealed trait DeltaOp extends ReplicatedDelta with RequiresCausalDeliveryOfDeltas
 
+  /**
+   * INTERNAL API
+   */
+  private[akka] abstract class DeltaOpBase[A] extends DeltaOp with RemovedNodePruning {
+    def underlying: ORSet[A]
+
+    override def zero: ORSet[A] = ORSet.empty
+
+    override def modifiedByNodes: Set[UniqueAddress] =
+      underlying.modifiedByNodes
+
+    override def needPruningFrom(removedNode: UniqueAddress): Boolean =
+      underlying.needPruningFrom(removedNode)
+
+    override def prune(removedNode: UniqueAddress, collapseInto: UniqueAddress): T =
+      throw new UnsupportedOperationException("prune not expected on delta")
+
+  }
+
   /** INTERNAL API */
-  private[akka] final case class AddDeltaOp[A](underlying: ORSet[A]) extends DeltaOp {
+  private[akka] final case class AddDeltaOp[A](underlying: ORSet[A]) extends DeltaOpBase[A] {
     type T = DeltaOp
 
     override def merge(that: DeltaOp): DeltaOp = that match {
@@ -48,11 +67,12 @@ object ORSet {
       case _             ⇒ ??? // FIXME merge of different delta types, use CompositeDeltaOp
     }
 
-    override def zero: ORSet[A] = ORSet.empty
+    override def pruningCleanup(removedNode: UniqueAddress): AddDeltaOp[A] =
+      AddDeltaOp(underlying.pruningCleanup(removedNode))
   }
 
   /** INTERNAL API */
-  private[akka] final case class RemoveDeltaOp[A](underlying: ORSet[A]) extends DeltaOp {
+  private[akka] final case class RemoveDeltaOp[A](underlying: ORSet[A]) extends DeltaOpBase[A] {
     type T = DeltaOp
 
     override def merge(that: DeltaOp): DeltaOp = that match {
@@ -62,7 +82,8 @@ object ORSet {
       case _ ⇒ ??? // FIXME merge of different delta types, use CompositeDeltaOp
     }
 
-    override def zero: ORSet[A] = ORSet.empty
+    override def pruningCleanup(removedNode: UniqueAddress): RemoveDeltaOp[A] =
+      RemoveDeltaOp(underlying.pruningCleanup(removedNode))
   }
   // FIXME we could use something like
   // final case class CompositeDeltaOp[A](ops: immutable.IndexedSeq[DeltaOp]) extends DeltaOp

@@ -664,11 +664,15 @@ object Replicator {
             }
           }
 
-          // cleanup both sides before merging, `merge((otherData: ReplicatedData)` will cleanup other.data
-          // FIXME cleanup the deltaVersions also
+          // cleanup and merge deltaVersions
+          val cleanedDeltaVersions = cleaned(deltaVersions, filteredMergedPruning).asInstanceOf[deltaVersions.T]
+          val cleanedOtherDeltaVersions = cleaned(other.deltaVersions, filteredMergedPruning)
+          val mergedDeltaVersions = cleanedDeltaVersions.merge(cleanedOtherDeltaVersions.asInstanceOf[cleanedDeltaVersions.T])
+
+          // cleanup both sides before merging, `merge(otherData: ReplicatedData)` will cleanup other.data
           copy(
             data = cleaned(data, filteredMergedPruning),
-            deltaVersions = deltaVersions.merge(other.deltaVersions),
+            deltaVersions = mergedDeltaVersions,
             pruning = filteredMergedPruning).merge(other.data)
         }
 
@@ -1276,8 +1280,7 @@ final class Replicator(settings: ReplicatorSettings) extends Actor with ActorLog
         try {
           // DataEnvelope will mergeDelta when needed
           val merged = envelope.merge(writeEnvelope).addSeen(selfAddress)
-          setData(key, merged)
-          Some(merged)
+          Some(setData(key, merged))
         } catch {
           case e: IllegalArgumentException ⇒
             log.warning(
@@ -1296,8 +1299,7 @@ final class Replicator(settings: ReplicatorSettings) extends Actor with ActorLog
           }
 
         val writeEnvelope3 = writeEnvelope2.addSeen(selfAddress)
-        setData(key, writeEnvelope3)
-        Some(writeEnvelope3)
+        Some(setData(key, writeEnvelope3))
     }
   }
 
@@ -1348,7 +1350,6 @@ final class Replicator(settings: ReplicatorSettings) extends Actor with ActorLog
     }
   }
 
-  // FIXME return the newEnvelope and use from receiveUpdate
   def setData(key: String, envelope: DataEnvelope): DataEnvelope = {
     val newEnvelope = {
       if (deltaCrdtEnabled) {

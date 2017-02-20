@@ -209,11 +209,11 @@ object ORSet {
    * @see [[ORSet#merge]]
    */
   private[akka] def mergeDisjointKeys[A](keys: Set[A], elementsMap: Map[A, ORSet.Dot], vvector: VersionVector,
-                                         accumulator: Map[A, ORSet.Dot]): Map[A, ORSet.Dot] =
+    accumulator: Map[A, ORSet.Dot]): Map[A, ORSet.Dot] =
     mergeDisjointKeys(keys.iterator, elementsMap, vvector, accumulator)
 
   private def mergeDisjointKeys[A](keys: Iterator[A], elementsMap: Map[A, ORSet.Dot], vvector: VersionVector,
-                                   accumulator: Map[A, ORSet.Dot]): Map[A, ORSet.Dot] = {
+    accumulator: Map[A, ORSet.Dot]): Map[A, ORSet.Dot] = {
     keys.foldLeft(accumulator) {
       case (acc, k) ⇒
         val dots = elementsMap(k)
@@ -260,8 +260,8 @@ object ORSet {
 @SerialVersionUID(1L)
 final class ORSet[A] private[akka] (
   private[akka] val elementsMap: Map[A, ORSet.Dot],
-  private[akka] val vvector:     VersionVector,
-  override val delta:            Option[ORSet.DeltaOp] = None)
+  private[akka] val vvector: VersionVector,
+  override val delta: Option[ORSet.DeltaOp] = None)
   extends DeltaReplicatedData
   with ReplicatedDataSerialization with RemovedNodePruning with FastMerge {
 
@@ -368,53 +368,44 @@ final class ORSet[A] private[akka] (
   override def merge(that: ORSet[A]): ORSet[A] = {
     if ((this eq that) || that.isAncestorOf(this)) this.clearAncestor()
     else if (this.isAncestorOf(that)) that.clearAncestor()
-    else {
-      val commonKeys =
-        if (this.elementsMap.size < that.elementsMap.size)
-          this.elementsMap.keysIterator.filter(that.elementsMap.contains)
-        else
-          that.elementsMap.keysIterator.filter(this.elementsMap.contains)
-      val entries00 = ORSet.mergeCommonKeys(commonKeys, this, that)
-      val thisUniqueKeys = this.elementsMap.keysIterator.filterNot(that.elementsMap.contains)
-      val entries0 = ORSet.mergeDisjointKeys(thisUniqueKeys, this.elementsMap, that.vvector, entries00)
-      val thatUniqueKeys = that.elementsMap.keysIterator.filterNot(this.elementsMap.contains)
-      val entries = ORSet.mergeDisjointKeys(thatUniqueKeys, that.elementsMap, this.vvector, entries0)
-      val mergedVvector = this.vvector.merge(that.vvector)
-
-      clearAncestor()
-      new ORSet(entries, mergedVvector)
-    }
+    else dryMerge(that, addDeltaOp = false)
   }
 
-  override def mergeDelta(thatDelta: ORSet.DeltaOp): ORSet[A] = {
-    thatDelta match {
-      case d: ORSet.AddDeltaOp[A]    ⇒ mergeAddDelta(d)
-      case d: ORSet.RemoveDeltaOp[A] ⇒ mergeRemoveDelta(d)
-      case ORSet.DeltaGroup(ops) ⇒
-        ops.foldLeft(this) {
-          case (acc, op: ORSet.AddDeltaOp[A])    ⇒ acc.mergeAddDelta(op)
-          case (acc, op: ORSet.RemoveDeltaOp[A]) ⇒ acc.mergeRemoveDelta(op)
-          case (acc, op: ORSet.DeltaGroup[A]) ⇒
-            throw new IllegalArgumentException("ORSet.DeltaGroup should not be nested")
-        }
-    }
-  }
-
-  private def mergeAddDelta(thatDelta: ORSet.AddDeltaOp[A]): ORSet[A] = {
-    val that = thatDelta.underlying
+  // share merge impl between full state merge and AddDeltaOp merge
+  private def dryMerge(that: ORSet[A], addDeltaOp: Boolean): ORSet[A] = {
     val commonKeys =
       if (this.elementsMap.size < that.elementsMap.size)
         this.elementsMap.keysIterator.filter(that.elementsMap.contains)
       else
         that.elementsMap.keysIterator.filter(this.elementsMap.contains)
     val entries00 = ORSet.mergeCommonKeys(commonKeys, this, that)
-    val entries0 = entries00 ++ this.elementsMap.filter { case (elem, _) ⇒ !that.elementsMap.contains(elem) }
+    val entries0 =
+      if (addDeltaOp)
+        entries00 ++ this.elementsMap.filter { case (elem, _) ⇒ !that.elementsMap.contains(elem) }
+      else {
+        val thisUniqueKeys = this.elementsMap.keysIterator.filterNot(that.elementsMap.contains)
+        ORSet.mergeDisjointKeys(thisUniqueKeys, this.elementsMap, that.vvector, entries00)
+      }
     val thatUniqueKeys = that.elementsMap.keysIterator.filterNot(this.elementsMap.contains)
     val entries = ORSet.mergeDisjointKeys(thatUniqueKeys, that.elementsMap, this.vvector, entries0)
     val mergedVvector = this.vvector.merge(that.vvector)
 
     clearAncestor()
     new ORSet(entries, mergedVvector)
+  }
+
+  override def mergeDelta(thatDelta: ORSet.DeltaOp): ORSet[A] = {
+    thatDelta match {
+      case d: ORSet.AddDeltaOp[A]    ⇒ dryMerge(d.underlying, addDeltaOp = true)
+      case d: ORSet.RemoveDeltaOp[A] ⇒ mergeRemoveDelta(d)
+      case ORSet.DeltaGroup(ops) ⇒
+        ops.foldLeft(this) {
+          case (acc, op: ORSet.AddDeltaOp[A])    ⇒ acc.dryMerge(op.underlying, addDeltaOp = true)
+          case (acc, op: ORSet.RemoveDeltaOp[A]) ⇒ acc.mergeRemoveDelta(op)
+          case (acc, op: ORSet.DeltaGroup[A]) ⇒
+            throw new IllegalArgumentException("ORSet.DeltaGroup should not be nested")
+        }
+    }
   }
 
   private def mergeRemoveDelta(thatDelta: ORSet.RemoveDeltaOp[A]): ORSet[A] = {
@@ -474,7 +465,7 @@ final class ORSet[A] private[akka] (
   }
 
   private def copy(elementsMap: Map[A, ORSet.Dot] = this.elementsMap, vvector: VersionVector = this.vvector,
-                   delta: Option[ORSet.DeltaOp] = this.delta): ORSet[A] =
+    delta: Option[ORSet.DeltaOp] = this.delta): ORSet[A] =
     new ORSet(elementsMap, vvector, delta)
 
   // this class cannot be a `case class` because we need different `unapply`

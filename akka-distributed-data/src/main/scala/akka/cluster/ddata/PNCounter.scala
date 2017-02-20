@@ -116,7 +116,9 @@ final class PNCounter private[akka] (
 
   override def zero: PNCounter = PNCounter.empty
 
-  override def resetDelta: PNCounter = new PNCounter(increments.resetDelta, decrements.resetDelta)
+  override def resetDelta: PNCounter =
+    if (increments.delta.isEmpty && decrements.delta.isEmpty) this
+    else new PNCounter(increments.resetDelta, decrements.resetDelta)
 
   override def modifiedByNodes: Set[UniqueAddress] =
     increments.modifiedByNodes union decrements.modifiedByNodes

@@ -79,7 +79,8 @@ final case class GSet[A] private (elements: Set[A])(override val delta: Option[G
   override def zero: GSet[A] = GSet.empty
 
   override def resetDelta: GSet[A] =
-    assignAncestor(new GSet[A](elements)(None))
+    if (delta.isEmpty) this
+    else assignAncestor(new GSet[A](elements)(None))
 
   override def toString: String = s"G$elements"
 

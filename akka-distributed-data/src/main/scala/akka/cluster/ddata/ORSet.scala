@@ -420,20 +420,26 @@ final class ORSet[A] private[akka] (
   private def mergeRemoveDelta(thatDelta: ORSet.RemoveDeltaOp[A]): ORSet[A] = {
     val that = thatDelta.underlying
     val (elem, thatDot) = that.elementsMap.head
-    val newElementsMap = elementsMap.get(elem) match {
-      case Some(thisDot) ⇒
-        if (thisDot == thatDot) elementsMap - elem
-        else elementsMap
-      case None ⇒
-        elementsMap
-    }
+    val newElementsMap =
+      if (that.vvector > vvector || that.vvector == vvector)
+        elementsMap - elem
+      else {
+        elementsMap.get(elem) match {
+          case Some(thisDot) ⇒
+            if (thatDot == thisDot || thatDot > thisDot) elementsMap - elem
+            else elementsMap
+          case None ⇒
+            elementsMap
+        }
+      }
     clearAncestor()
     val newVvector = vvector.merge(that.vvector)
     new ORSet(newElementsMap, newVvector)
   }
 
   override def resetDelta: ORSet[A] =
-    assignAncestor(new ORSet(elementsMap, vvector))
+    if (delta.isEmpty) this
+    else assignAncestor(new ORSet(elementsMap, vvector))
 
   override def modifiedByNodes: Set[UniqueAddress] =
     vvector.modifiedByNodes

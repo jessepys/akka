@@ -331,6 +331,25 @@ class ORSetSpec extends WordSpec with Matchers {
       s6.mergeDelta(s3.delta.get).elements should ===(Set("a", "b", "c"))
     }
 
+    "handle a mixed add/remove scenario" in {
+      val s1 = ORSet.empty[String]
+      val s2 = s1.resetDelta.remove(node1, "e")
+      val s3 = s2.resetDelta.add(node1, "b")
+      val s4 = s3.resetDelta.add(node1, "a")
+      val s5 = s4.resetDelta.remove(node1, "b")
+
+      val deltaGroup1 = s3.delta.get merge s4.delta.get merge s5.delta.get
+
+      val s7 = s2 mergeDelta deltaGroup1
+      s7.elements should ===(Set("a"))
+      // The above scenario was constructed from failing ReplicatorDeltaSpec,
+      // some more checks...
+
+      val s8 = s2.resetDelta.add(node2, "z") // concurrent update from node2
+      val s9 = s8 mergeDelta deltaGroup1
+      s9.elements should ===(Set("a", "z"))
+    }
+
     "require causal delivery of deltas" in {
       // This test illustrates why we need causal delivery of deltas.
       // Otherwise the following could happen.

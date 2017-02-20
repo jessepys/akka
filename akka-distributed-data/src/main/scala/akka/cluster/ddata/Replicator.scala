@@ -45,6 +45,7 @@ import akka.actor.ActorInitializationException
 import java.util.concurrent.TimeUnit
 import akka.util.Helpers.toRootLowerCase
 import akka.actor.Cancellable
+import scala.util.control.NonFatal
 
 object ReplicatorSettings {
 
@@ -120,29 +121,29 @@ object ReplicatorSettings {
  *        in the `Set`.
  */
 final class ReplicatorSettings(
-  val role:                           Option[String],
-  val gossipInterval:                 FiniteDuration,
-  val notifySubscribersInterval:      FiniteDuration,
-  val maxDeltaElements:               Int,
-  val dispatcher:                     String,
-  val pruningInterval:                FiniteDuration,
-  val maxPruningDissemination:        FiniteDuration,
-  val durableStoreProps:              Either[(String, Config), Props],
-  val durableKeys:                    Set[String],
-  val pruningMarkerTimeToLive:        FiniteDuration,
+  val role: Option[String],
+  val gossipInterval: FiniteDuration,
+  val notifySubscribersInterval: FiniteDuration,
+  val maxDeltaElements: Int,
+  val dispatcher: String,
+  val pruningInterval: FiniteDuration,
+  val maxPruningDissemination: FiniteDuration,
+  val durableStoreProps: Either[(String, Config), Props],
+  val durableKeys: Set[String],
+  val pruningMarkerTimeToLive: FiniteDuration,
   val durablePruningMarkerTimeToLive: FiniteDuration,
-  val deltaCrdtEnabled:               Boolean) {
+  val deltaCrdtEnabled: Boolean) {
 
   // For backwards compatibility
   def this(role: Option[String], gossipInterval: FiniteDuration, notifySubscribersInterval: FiniteDuration,
-           maxDeltaElements: Int, dispatcher: String, pruningInterval: FiniteDuration, maxPruningDissemination: FiniteDuration) =
+    maxDeltaElements: Int, dispatcher: String, pruningInterval: FiniteDuration, maxPruningDissemination: FiniteDuration) =
     this(role, gossipInterval, notifySubscribersInterval, maxDeltaElements, dispatcher, pruningInterval,
       maxPruningDissemination, Right(Props.empty), Set.empty, 6.hours, 10.days, true)
 
   // For backwards compatibility
   def this(role: Option[String], gossipInterval: FiniteDuration, notifySubscribersInterval: FiniteDuration,
-           maxDeltaElements: Int, dispatcher: String, pruningInterval: FiniteDuration, maxPruningDissemination: FiniteDuration,
-           durableStoreProps: Either[(String, Config), Props], durableKeys: Set[String]) =
+    maxDeltaElements: Int, dispatcher: String, pruningInterval: FiniteDuration, maxPruningDissemination: FiniteDuration,
+    durableStoreProps: Either[(String, Config), Props], durableKeys: Set[String]) =
     this(role, gossipInterval, notifySubscribersInterval, maxDeltaElements, dispatcher, pruningInterval,
       maxPruningDissemination, durableStoreProps, durableKeys, 6.hours, 10.days, true)
 
@@ -171,7 +172,7 @@ final class ReplicatorSettings(
     copy(pruningInterval = pruningInterval, maxPruningDissemination = maxPruningDissemination)
 
   def withPruningMarkerTimeToLive(
-    pruningMarkerTimeToLive:        FiniteDuration,
+    pruningMarkerTimeToLive: FiniteDuration,
     durablePruningMarkerTimeToLive: FiniteDuration): ReplicatorSettings =
     copy(
       pruningMarkerTimeToLive = pruningMarkerTimeToLive,
@@ -198,18 +199,18 @@ final class ReplicatorSettings(
     copy(deltaCrdtEnabled = deltaCrdtEnabled)
 
   private def copy(
-    role:                           Option[String]                  = role,
-    gossipInterval:                 FiniteDuration                  = gossipInterval,
-    notifySubscribersInterval:      FiniteDuration                  = notifySubscribersInterval,
-    maxDeltaElements:               Int                             = maxDeltaElements,
-    dispatcher:                     String                          = dispatcher,
-    pruningInterval:                FiniteDuration                  = pruningInterval,
-    maxPruningDissemination:        FiniteDuration                  = maxPruningDissemination,
-    durableStoreProps:              Either[(String, Config), Props] = durableStoreProps,
-    durableKeys:                    Set[String]                     = durableKeys,
-    pruningMarkerTimeToLive:        FiniteDuration                  = pruningMarkerTimeToLive,
-    durablePruningMarkerTimeToLive: FiniteDuration                  = durablePruningMarkerTimeToLive,
-    deltaCrdtEnabled:               Boolean                         = deltaCrdtEnabled): ReplicatorSettings =
+    role: Option[String] = role,
+    gossipInterval: FiniteDuration = gossipInterval,
+    notifySubscribersInterval: FiniteDuration = notifySubscribersInterval,
+    maxDeltaElements: Int = maxDeltaElements,
+    dispatcher: String = dispatcher,
+    pruningInterval: FiniteDuration = pruningInterval,
+    maxPruningDissemination: FiniteDuration = maxPruningDissemination,
+    durableStoreProps: Either[(String, Config), Props] = durableStoreProps,
+    durableKeys: Set[String] = durableKeys,
+    pruningMarkerTimeToLive: FiniteDuration = pruningMarkerTimeToLive,
+    durablePruningMarkerTimeToLive: FiniteDuration = durablePruningMarkerTimeToLive,
+    deltaCrdtEnabled: Boolean = deltaCrdtEnabled): ReplicatorSettings =
     new ReplicatorSettings(role, gossipInterval, notifySubscribersInterval, maxDeltaElements, dispatcher,
       pruningInterval, maxPruningDissemination, durableStoreProps, durableKeys,
       pruningMarkerTimeToLive, durablePruningMarkerTimeToLive, deltaCrdtEnabled)
@@ -433,7 +434,7 @@ object Replicator {
    * for example not access `sender()` reference of an enclosing actor.
    */
   final case class Update[A <: ReplicatedData](key: Key[A], writeConsistency: WriteConsistency,
-                                               request: Option[Any])(val modify: Option[A] ⇒ A)
+    request: Option[Any])(val modify: Option[A] ⇒ A)
     extends Command[A] with NoSerializationVerificationNeeded {
 
     /**
@@ -603,9 +604,9 @@ object Replicator {
      * The `DataEnvelope` wraps a data entry and carries state of the pruning process for the entry.
      */
     final case class DataEnvelope(
-      data:          ReplicatedData,
-      pruning:       Map[UniqueAddress, PruningState] = Map.empty,
-      deltaVersions: VersionVector                    = VersionVector.empty)
+      data: ReplicatedData,
+      pruning: Map[UniqueAddress, PruningState] = Map.empty,
+      deltaVersions: VersionVector = VersionVector.empty)
       extends ReplicatorMessage {
 
       import PruningState._
@@ -614,6 +615,13 @@ object Replicator {
         if (deltaVersions.isEmpty) this
         else copy(deltaVersions = VersionVector.empty)
 
+      /**
+       * We only use the deltaVersions to track versions per node, not for ordering comparisons,
+       * so we can just remove the entry for the removed node.
+       */
+      private def cleanedDeltaVersions(from: UniqueAddress): VersionVector =
+        deltaVersions.pruningCleanup(from)
+
       def needPruningFrom(removedNode: UniqueAddress): Boolean =
         data match {
           case r: RemovedNodePruning ⇒ r.needPruningFrom(removedNode)
@@ -621,7 +629,9 @@ object Replicator {
         }
 
       def initRemovedNodePruning(removed: UniqueAddress, owner: UniqueAddress): DataEnvelope = {
-        copy(pruning = pruning.updated(removed, PruningInitialized(owner, Set.empty)))
+        copy(
+          pruning = pruning.updated(removed, PruningInitialized(owner, Set.empty)),
+          deltaVersions = cleanedDeltaVersions(removed))
       }
 
       def prune(from: UniqueAddress, pruningPerformed: PruningPerformed): DataEnvelope = {
@@ -631,7 +641,8 @@ object Replicator {
             pruning(from) match {
               case PruningInitialized(owner, _) ⇒
                 val prunedData = dataWithRemovedNodePruning.prune(from, owner)
-                copy(data = prunedData, pruning = pruning.updated(from, pruningPerformed))
+                copy(data = prunedData, pruning = pruning.updated(from, pruningPerformed),
+                  deltaVersions = cleanedDeltaVersions(from))
               case _ ⇒
                 this
             }
@@ -665,9 +676,10 @@ object Replicator {
           }
 
           // cleanup and merge deltaVersions
-          val cleanedDeltaVersions = cleaned(deltaVersions, filteredMergedPruning).asInstanceOf[deltaVersions.T]
-          val cleanedOtherDeltaVersions = cleaned(other.deltaVersions, filteredMergedPruning)
-          val mergedDeltaVersions = cleanedDeltaVersions.merge(cleanedOtherDeltaVersions.asInstanceOf[cleanedDeltaVersions.T])
+          val removedNodes = filteredMergedPruning.keys
+          val cleanedDV = removedNodes.foldLeft(deltaVersions) { (acc, node) ⇒ acc.pruningCleanup(node) }
+          val cleanedOtherDV = removedNodes.foldLeft(other.deltaVersions) { (acc, node) ⇒ acc.pruningCleanup(node) }
+          val mergedDeltaVersions = cleanedDV.merge(cleanedOtherDV)
 
           // cleanup both sides before merging, `merge(otherData: ReplicatedData)` will cleanup other.data
           copy(
@@ -1190,7 +1202,7 @@ final class Replicator(settings: ReplicatorSettings) extends Actor with ActorLog
   def isLocalSender(): Boolean = !replyTo.path.address.hasGlobalScope
 
   def receiveUpdate(key: KeyR, modify: Option[ReplicatedData] ⇒ ReplicatedData,
-                    writeConsistency: WriteConsistency, req: Option[Any]): Unit = {
+    writeConsistency: WriteConsistency, req: Option[Any]): Unit = {
     val localValue = getData(key.id)
     Try {
       localValue match {
@@ -1404,6 +1416,13 @@ final class Replicator(settings: ReplicatorSettings) extends Actor with ActorLog
       case None                                         ⇒ 0L
     }
 
+  def isNodeRemoved(node: UniqueAddress, keys: Iterable[String]): Boolean = {
+    removedNodes.contains(node) || (keys.exists(key ⇒ dataEntries.get(key) match {
+      case Some((DataEnvelope(_, pruning, _), _)) ⇒ pruning.contains(node)
+      case None                                   ⇒ false
+    }))
+  }
+
   def receiveFlushChanges(): Unit = {
     def notify(keyId: String, subs: mutable.Set[ActorRef]): Unit = {
       val key = subscriptionKeys(keyId)
@@ -1446,34 +1465,48 @@ final class Replicator(settings: ReplicatorSettings) extends Actor with ActorLog
 
   def receiveDeltaPropagation(fromNode: UniqueAddress, deltas: Map[String, Delta]): Unit =
     if (deltaCrdtEnabled) {
-      val isDebugEnabled = log.isDebugEnabled
-      if (isDebugEnabled)
-        // FIXME log.debug("Received DeltaPropagation from [{}], containing [{}]", fromNode.address,
-        //        deltas.collect { case (key, Delta(_, fromSeqNr, toSeqNr)) => s"$key $fromSeqNr-$toSeqNr" }.mkString(", "))
-        log.debug("Received DeltaPropagation from [{}], containing [{}]", fromNode.address,
-          deltas.collect { case (key, Delta(d, fromSeqNr, toSeqNr)) ⇒ s"$key $fromSeqNr-$toSeqNr ${d.data}" }.mkString(", "))
+      try {
+        val isDebugEnabled = log.isDebugEnabled
+        if (isDebugEnabled)
+          // FIXME log.debug("Received DeltaPropagation from [{}], containing [{}]", fromNode.address,
+          //        deltas.collect { case (key, Delta(_, fromSeqNr, toSeqNr)) => s"$key $fromSeqNr-$toSeqNr" }.mkString(", "))
+          log.debug("Received DeltaPropagation from [{}], containing [{}]", fromNode.address,
+            deltas.collect { case (key, Delta(d, fromSeqNr, toSeqNr)) ⇒ s"$key $fromSeqNr-$toSeqNr ${d.data}" }.mkString(", "))
 
-      deltas.foreach {
-        case (key, Delta(envelope @ DataEnvelope(_: RequiresCausalDeliveryOfDeltas, _, _), fromSeqNr, toSeqNr)) ⇒
-          val currentSeqNr = getDeltaSeqNr(key, fromNode)
-          if (currentSeqNr >= toSeqNr) {
-            if (isDebugEnabled) log.debug(
-              "Skipping DeltaPropagation from [{}] for [{}] because toSeqNr [{}] already handled [{}]",
-              fromNode.address, key, toSeqNr, currentSeqNr)
-          } else if (fromSeqNr > (currentSeqNr + 1)) {
-            if (isDebugEnabled) log.debug(
-              "Skipping DeltaPropagation from [{}] for [{}] because missing deltas between [{}-{}]",
-              fromNode.address, key, currentSeqNr + 1, fromSeqNr - 1)
-          } else {
-            if (isDebugEnabled) log.debug(
-              "Applying DeltaPropagation from [{}] for [{}] with sequence numbers [{}], current was [{}]",
-              fromNode.address, key, s"$fromSeqNr-$toSeqNr", currentSeqNr)
-            val newEnvelope = envelope.copy(deltaVersions = VersionVector(fromNode, toSeqNr))
-            writeAndStore(key, newEnvelope)
+        if (isNodeRemoved(fromNode, deltas.keys)) {
+          // Late message from a removed node.
+          // Drop it to avoid merging deltas that have been pruned on one side.
+          if (isDebugEnabled) log.debug(
+            "Skipping DeltaPropagation from [{}] because that node has been removed", fromNode.address)
+        } else {
+          deltas.foreach {
+            case (key, Delta(envelope @ DataEnvelope(_: RequiresCausalDeliveryOfDeltas, _, _), fromSeqNr, toSeqNr)) ⇒
+              val currentSeqNr = getDeltaSeqNr(key, fromNode)
+              if (currentSeqNr >= toSeqNr) {
+                if (isDebugEnabled) log.debug(
+                  "Skipping DeltaPropagation from [{}] for [{}] because toSeqNr [{}] already handled [{}]",
+                  fromNode.address, key, toSeqNr, currentSeqNr)
+              } else if (fromSeqNr > (currentSeqNr + 1)) {
+                if (isDebugEnabled) log.debug(
+                  "Skipping DeltaPropagation from [{}] for [{}] because missing deltas between [{}-{}]",
+                  fromNode.address, key, currentSeqNr + 1, fromSeqNr - 1)
+              } else {
+                if (isDebugEnabled) log.debug(
+                  "Applying DeltaPropagation from [{}] for [{}] with sequence numbers [{}], current was [{}]",
+                  fromNode.address, key, s"$fromSeqNr-$toSeqNr", currentSeqNr)
+                val newEnvelope = envelope.copy(deltaVersions = VersionVector(fromNode, toSeqNr))
+                writeAndStore(key, newEnvelope)
+              }
+            case (key, Delta(envelope, _, _)) ⇒
+              // causal delivery of deltas not needed, just apply it
+              writeAndStore(key, envelope)
           }
-        case (key, Delta(envelope, _, _)) ⇒
-          // causal delivery of deltas not needed, just apply it
-          writeAndStore(key, envelope)
+        }
+      } catch {
+        case NonFatal(e) =>
+          // catching in case we need to support rolling upgrades that are
+          // mixing nodes with incompatible delta-CRDT types
+          log.warning("Couldn't process DeltaPropagation from [] due to {}", fromNode, e)
       }
     }
 
@@ -1810,14 +1843,14 @@ private[akka] abstract class ReadWriteAggregator extends Actor {
  */
 private[akka] object WriteAggregator {
   def props(
-    key:         KeyR,
-    envelope:    Replicator.Internal.DataEnvelope,
+    key: KeyR,
+    envelope: Replicator.Internal.DataEnvelope,
     consistency: Replicator.WriteConsistency,
-    req:         Option[Any],
-    nodes:       Set[Address],
+    req: Option[Any],
+    nodes: Set[Address],
     unreachable: Set[Address],
-    replyTo:     ActorRef,
-    durable:     Boolean): Props =
+    replyTo: ActorRef,
+    durable: Boolean): Props =
     Props(new WriteAggregator(key, envelope, consistency, req, nodes, unreachable, replyTo, durable))
       .withDeploy(Deploy.local)
 }
@@ -1826,14 +1859,14 @@ private[akka] object WriteAggregator {
  * INTERNAL API
  */
 private[akka] class WriteAggregator(
-  key:                      KeyR,
-  envelope:                 Replicator.Internal.DataEnvelope,
-  consistency:              Replicator.WriteConsistency,
-  req:                      Option[Any],
-  override val nodes:       Set[Address],
+  key: KeyR,
+  envelope: Replicator.Internal.DataEnvelope,
+  consistency: Replicator.WriteConsistency,
+  req: Option[Any],
+  override val nodes: Set[Address],
   override val unreachable: Set[Address],
-  replyTo:                  ActorRef,
-  durable:                  Boolean) extends ReadWriteAggregator {
+  replyTo: ActorRef,
+  durable: Boolean) extends ReadWriteAggregator {
 
   import Replicator._
   import Replicator.Internal._
@@ -1917,13 +1950,13 @@ private[akka] class WriteAggregator(
  */
 private[akka] object ReadAggregator {
   def props(
-    key:         KeyR,
+    key: KeyR,
     consistency: Replicator.ReadConsistency,
-    req:         Option[Any],
-    nodes:       Set[Address],
+    req: Option[Any],
+    nodes: Set[Address],
     unreachable: Set[Address],
-    localValue:  Option[Replicator.Internal.DataEnvelope],
-    replyTo:     ActorRef): Props =
+    localValue: Option[Replicator.Internal.DataEnvelope],
+    replyTo: ActorRef): Props =
     Props(new ReadAggregator(key, consistency, req, nodes, unreachable, localValue, replyTo))
       .withDeploy(Deploy.local)
 
@@ -1933,13 +1966,13 @@ private[akka] object ReadAggregator {
  * INTERNAL API
  */
 private[akka] class ReadAggregator(
-  key:                      KeyR,
-  consistency:              Replicator.ReadConsistency,
-  req:                      Option[Any],
-  override val nodes:       Set[Address],
+  key: KeyR,
+  consistency: Replicator.ReadConsistency,
+  req: Option[Any],
+  override val nodes: Set[Address],
   override val unreachable: Set[Address],
-  localValue:               Option[Replicator.Internal.DataEnvelope],
-  replyTo:                  ActorRef) extends ReadWriteAggregator {
+  localValue: Option[Replicator.Internal.DataEnvelope],
+  replyTo: ActorRef) extends ReadWriteAggregator {
 
   import Replicator._
   import Replicator.Internal._

@@ -368,7 +368,8 @@ final case class ManyVersionVector(versions: TreeMap[UniqueAddress, Long]) exten
     VersionVector(versions = versions - removedNode) + collapseInto
 
   override def pruningCleanup(removedNode: UniqueAddress): VersionVector =
-    VersionVector(versions = versions - removedNode)
+    if (versions.contains(removedNode)) VersionVector(versions = versions - removedNode)
+    else this
 
   override def toString: String =
     versions.map { case ((n, v)) ⇒ n + " -> " + v }.mkString("VersionVector(", ", ", ")")

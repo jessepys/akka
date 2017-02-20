@@ -44,24 +44,13 @@ object ORSet {
   /**
    * INTERNAL API
    */
-  private[akka] sealed abstract class DeltaOpBase[A] extends DeltaOp with RemovedNodePruning {
+  private[akka] sealed abstract class AtomicDeltaOp[A] extends DeltaOp {
     def underlying: ORSet[A]
-
     override def zero: ORSet[A] = ORSet.empty
-
-    override def modifiedByNodes: Set[UniqueAddress] =
-      underlying.modifiedByNodes
-
-    override def needPruningFrom(removedNode: UniqueAddress): Boolean =
-      underlying.needPruningFrom(removedNode)
-
-    override def prune(removedNode: UniqueAddress, collapseInto: UniqueAddress): T =
-      throw new UnsupportedOperationException("prune not expected on delta")
-
   }
 
   /** INTERNAL API */
-  private[akka] final case class AddDeltaOp[A](underlying: ORSet[A]) extends DeltaOpBase[A] {
+  private[akka] final case class AddDeltaOp[A](underlying: ORSet[A]) extends AtomicDeltaOp[A] {
 
     override def merge(that: DeltaOp): DeltaOp = that match {
       case AddDeltaOp(u) ⇒
@@ -81,24 +70,17 @@ object ORSet {
       } else
         underlying.elementsMap ++ thatMap
     }
-
-    override def pruningCleanup(removedNode: UniqueAddress): AddDeltaOp[A] =
-      AddDeltaOp(underlying.pruningCleanup(removedNode))
   }
 
   /** INTERNAL API */
-  private[akka] final case class RemoveDeltaOp[A](underlying: ORSet[A]) extends DeltaOpBase[A] {
-
+  private[akka] final case class RemoveDeltaOp[A](underlying: ORSet[A]) extends AtomicDeltaOp[A] {
     override def merge(that: DeltaOp): DeltaOp = that match {
-      case _: DeltaOpBase[A] ⇒ DeltaGroup(Vector(this, that)) // keep it simple for removals
-      case DeltaGroup(ops)   ⇒ DeltaGroup(this +: ops)
+      case _: AtomicDeltaOp[A] ⇒ DeltaGroup(Vector(this, that)) // keep it simple for removals
+      case DeltaGroup(ops)     ⇒ DeltaGroup(this +: ops)
     }
-
-    override def pruningCleanup(removedNode: UniqueAddress): RemoveDeltaOp[A] =
-      RemoveDeltaOp(underlying.pruningCleanup(removedNode))
   }
 
-  final case class DeltaGroup[A](ops: immutable.IndexedSeq[DeltaOp]) extends DeltaOp with RemovedNodePruning {
+  final case class DeltaGroup[A](ops: immutable.IndexedSeq[DeltaOp]) extends DeltaOp {
     override def merge(that: DeltaOp): DeltaOp = that match {
       case thatAdd: AddDeltaOp[A] ⇒
         // merge AddDeltaOp into last AddDeltaOp in the group, if possible
@@ -111,27 +93,6 @@ object ORSet {
     }
 
     override def zero: ORSet[A] = ORSet.empty
-
-    override def modifiedByNodes: Set[UniqueAddress] =
-      ops.flatMap {
-        case p: RemovedNodePruning ⇒ p.modifiedByNodes
-        case _                     ⇒ Set.empty[UniqueAddress]
-      }(collection.breakOut)
-
-    override def needPruningFrom(removedNode: UniqueAddress): Boolean =
-      ops.exists {
-        case p: RemovedNodePruning ⇒ p.needPruningFrom(removedNode)
-        case _                     ⇒ false
-      }
-
-    override def pruningCleanup(removedNode: UniqueAddress): DeltaGroup[A] =
-      DeltaGroup(ops.map {
-        case p: RemovedNodePruning ⇒ p.pruningCleanup(removedNode)
-        case other                 ⇒ other
-      })
-
-    override def prune(removedNode: UniqueAddress, collapseInto: UniqueAddress): DeltaGroup[A] =
-      throw new UnsupportedOperationException("prune not expected on delta")
   }
 
   /**

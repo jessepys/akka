@@ -54,7 +54,6 @@ object ORSet {
 
     override def merge(that: DeltaOp): DeltaOp = that match {
       case AddDeltaOp(u) ⇒
-        // FIXME is this always correct?
         // Note that we only merge deltas originating from the same node
         AddDeltaOp(new ORSet(
           concatElementsMap(u.elementsMap.asInstanceOf[Map[A, Dot]]),
@@ -493,9 +492,7 @@ final class ORSet[A] private[akka] (
 
   // this class cannot be a `case class` because we need different `unapply`
 
-  override def toString: String =
-    // FIXME s"OR$elements"
-    s"ORSet([${elementsMap.mkString(",")}], $vvector)"
+  override def toString: String = s"OR$elements"
 
   override def equals(o: Any): Boolean = o match {
     case other: ORSet[_] ⇒ vvector == other.vvector && elementsMap == other.elementsMap

@@ -4,6 +4,8 @@
 package akka.cluster.ddata
 
 import akka.cluster.UniqueAddress
+import scala.compat.java8.OptionConverters._
+import java.util.Optional
 
 /**
  * Interface for implementing a state based convergent
@@ -112,11 +114,11 @@ trait RequiresCausalDeliveryOfDeltas extends ReplicatedDelta
 /**
  * Java API: Interface for implementing a [[ReplicatedData]] in Java.
  *
- * The type parameter `D` is a self-recursive type to be defined by the
+ * The type parameter `A` is a self-recursive type to be defined by the
  * concrete implementation.
  * E.g. `class TwoPhaseSet extends AbstractReplicatedData&lt;TwoPhaseSet&gt;`
  */
-abstract class AbstractReplicatedData[D <: AbstractReplicatedData[D]] extends ReplicatedData {
+abstract class AbstractReplicatedData[A <: AbstractReplicatedData[A]] extends ReplicatedData {
 
   override type T = ReplicatedData
 
@@ -124,28 +126,57 @@ abstract class AbstractReplicatedData[D <: AbstractReplicatedData[D]] extends Re
    * Delegates to [[#mergeData]], which must be implemented by subclass.
    */
   final override def merge(that: ReplicatedData): ReplicatedData =
-    mergeData(that.asInstanceOf[D])
+    mergeData(that.asInstanceOf[A])
 
   /**
    * Java API: Monotonic merge function.
    */
-  def mergeData(that: D): D
+  def mergeData(that: A): A
 
 }
 
 /**
  * Java API: Interface for implementing a [[DeltaReplicatedData]] in Java.
  *
- * The type parameter `D` is a self-recursive type to be defined by the
+ * The type parameter `A` is a self-recursive type to be defined by the
  * concrete implementation.
- * E.g. `class TwoPhaseSet extends AbstractDeltaReplicatedData&lt;TwoPhaseSet&gt;`
+ * E.g. `class TwoPhaseSet extends AbstractDeltaReplicatedData&lt;TwoPhaseSet, TwoPhaseSet&gt;`
  */
-abstract class AbstractDeltaReplicatedData[D <: AbstractDeltaReplicatedData[D]]
-  extends AbstractReplicatedData[D] with DeltaReplicatedData {
+abstract class AbstractDeltaReplicatedData[A <: AbstractDeltaReplicatedData[A, B], B <: ReplicatedDelta]
+  extends AbstractReplicatedData[A] with DeltaReplicatedData {
 
   override type D = ReplicatedDelta
 
-  // FIXME methods for delta Java API
+  /**
+   * Delegates to [[#deltaData]], which must be implemented by subclass.
+   */
+  final override def delta: Option[ReplicatedDelta] =
+    deltaData.asScala
+
+  /**
+   * The accumulated delta of mutator operations since previous
+   * [[#resetDelta]]. When the `Replicator` invokes the `modify` function
+   * of the `Update` message and the user code is invoking one or more mutator
+   * operations the data is collecting the delta of the operations and makes
+   * it available for the `Replicator` with the [[#deltaData]] accessor. The
+   * `modify` function shall still return the full state in the same way as
+   * `ReplicatedData` without support for deltas.
+   */
+  def deltaData: Optional[B]
+
+  /**
+   * Delegates to [[#mergeDeltaData]], which must be implemented by subclass.
+   */
+  final override def mergeDelta(that: ReplicatedDelta): ReplicatedData =
+    mergeDeltaData(that.asInstanceOf[B])
+
+  /**
+   * When delta is merged into the full state this method is used.
+   * When the type `D` of the delta is of the same type as the full state `T`
+   * this method can be implemented by delegating to `mergeData`.
+   */
+  def mergeDeltaData(that: B): A
+
 }
 
 /**

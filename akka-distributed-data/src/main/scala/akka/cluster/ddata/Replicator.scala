@@ -788,14 +788,13 @@ object Replicator {
  * result in sending the delta {'c', 'd'} and merge that with the state on the
  * receiving side, resulting in set {'a', 'b', 'c', 'd'}.
  *
- * Current protocol for replicating the deltas does not support causal consistency.
- * It is only eventually consistent. This means that if elements 'c' and 'd' are
+ * The protocol for replicating the deltas supports causal consistency if the data type
+ * is marked with [[RequiresCausalDeliveryOfDeltas]]. Otherwise it is only eventually
+ * consistent. Without causal consistency it means that if elements 'c' and 'd' are
  * added in two separate `Update` operations these deltas may occasionally be propagated
  * to nodes in different order than the causal order of the updates. For this example it
  * can result in that set {'a', 'b', 'd'} can be seen before element 'c' is seen. Eventually
- * it will be {'a', 'b', 'c', 'd'}. If causal consistency is needed the delta propagation
- * should be disabled with configuration property
- * `akka.cluster.distributed-data.delta-crdt.enabled=off`.
+ * it will be {'a', 'b', 'c', 'd'}.
  *
  * == Update ==
  *

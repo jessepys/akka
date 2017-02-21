@@ -47,7 +47,7 @@ object ReplicatorDeltaSpec extends MultiNodeConfig {
   val KeyE = ORSetKey[String]("E")
   val KeyF = ORSetKey[String]("F")
 
-  def generateOperations(): Vector[Op] = {
+  def generateOperations(onNode: RoleName): Vector[Op] = {
     val rnd = ThreadLocalRandom.current()
 
     def consistency(): WriteConsistency = {
@@ -98,8 +98,8 @@ object ReplicatorDeltaSpec extends MultiNodeConfig {
         case 3 ⇒
           // ORSet
           val key = rndOrSetkey()
-          // only removals for KeyF
-          if (key == KeyF && rnd.nextInt(2) == 1)
+          // only removals for KeyF on node first
+          if (key == KeyF && onNode == first && rnd.nextBoolean())
             Remove(key, rndRemoveElement(), consistency())
           else
             Add(key, rndAddElement(), consistency())
@@ -174,27 +174,32 @@ class ReplicatorDeltaSpec extends MultiNodeSpec(ReplicatorDeltaSpec) with STMult
       enterBarrier("ready")
 
       runOn(first) {
-        fullStateReplicator ! Update(KeyA, PNCounter.empty, WriteLocal)(_ + 1)
-        fullStateReplicator ! Update(KeyD, ORSet.empty[String], WriteLocal)(_ + "a")
-        deltaReplicator ! Update(KeyA, PNCounter.empty, WriteLocal)(_ + 1)
-        deltaReplicator ! Update(KeyD, ORSet.empty[String], WriteLocal)(_ + "a")
+        // by setting something for each key we don't have to worry about NotFound
+        List(KeyA, KeyB, KeyC).foreach { key ⇒
+          fullStateReplicator ! Update(key, PNCounter.empty, WriteLocal)(_ + 1)
+          deltaReplicator ! Update(key, PNCounter.empty, WriteLocal)(_ + 1)
+        }
+        List(KeyD, KeyE, KeyF).foreach { key ⇒
+          fullStateReplicator ! Update(key, ORSet.empty[String], WriteLocal)(_ + "a")
+          deltaReplicator ! Update(key, ORSet.empty[String], WriteLocal)(_ + "a")
+        }
       }
       enterBarrier("updated-1")
 
       within(5.seconds) {
         awaitAssert {
           val p = TestProbe()
-          fullStateReplicator.tell(Get(KeyA, ReadLocal), p.ref)
-          p.expectMsgType[GetSuccess[PNCounter]].dataValue.getValue.intValue should be(1)
-          fullStateReplicator.tell(Get(KeyD, ReadLocal), p.ref)
-          p.expectMsgType[GetSuccess[ORSet[String]]].dataValue.elements should ===(Set("a"))
+          List(KeyA, KeyB, KeyC).foreach { key ⇒
+            fullStateReplicator.tell(Get(key, ReadLocal), p.ref)
+            p.expectMsgType[GetSuccess[PNCounter]].dataValue.getValue.intValue should be(1)
+          }
         }
         awaitAssert {
           val p = TestProbe()
-          deltaReplicator.tell(Get(KeyA, ReadLocal), p.ref)
-          p.expectMsgType[GetSuccess[PNCounter]].dataValue.getValue.intValue should be(1)
-          deltaReplicator.tell(Get(KeyD, ReadLocal), p.ref)
-          p.expectMsgType[GetSuccess[ORSet[String]]].dataValue.elements should ===(Set("a"))
+          List(KeyD, KeyE, KeyF).foreach { key ⇒
+            fullStateReplicator.tell(Get(key, ReadLocal), p.ref)
+            p.expectMsgType[GetSuccess[ORSet[String]]].dataValue.elements should ===(Set("a"))
+          }
         }
       }
 
@@ -202,7 +207,7 @@ class ReplicatorDeltaSpec extends MultiNodeSpec(ReplicatorDeltaSpec) with STMult
     }
 
     "be eventually consistent" in {
-      val operations = generateOperations()
+      val operations = generateOperations(onNode = myself)
       log.debug(s"random operations on [${myself.name}]: ${operations.mkString(", ")}")
       try {
         // perform random operations with both delta and full-state replicators

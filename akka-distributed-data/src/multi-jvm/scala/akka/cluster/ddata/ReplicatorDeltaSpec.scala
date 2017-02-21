@@ -261,7 +261,6 @@ class ReplicatorDeltaSpec extends MultiNodeSpec(ReplicatorDeltaSpec) with STMult
               val fullStateValue = p.expectMsgType[GetSuccess[ORSet[String]]].dataValue.elements
               deltaReplicator.tell(Get(key, ReadLocal), p.ref)
               val deltaValue = p.expectMsgType[GetSuccess[ORSet[String]]].dataValue.elements
-              println(s"# assert key $key $fullStateValue vs $deltaValue") // FIXME
               deltaValue should ===(fullStateValue)
             }
           }

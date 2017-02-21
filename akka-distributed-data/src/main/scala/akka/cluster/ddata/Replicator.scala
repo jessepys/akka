@@ -1468,10 +1468,8 @@ final class Replicator(settings: ReplicatorSettings) extends Actor with ActorLog
       try {
         val isDebugEnabled = log.isDebugEnabled
         if (isDebugEnabled)
-          // FIXME log.debug("Received DeltaPropagation from [{}], containing [{}]", fromNode.address,
-          //        deltas.collect { case (key, Delta(_, fromSeqNr, toSeqNr)) => s"$key $fromSeqNr-$toSeqNr" }.mkString(", "))
           log.debug("Received DeltaPropagation from [{}], containing [{}]", fromNode.address,
-            deltas.collect { case (key, Delta(d, fromSeqNr, toSeqNr)) ⇒ s"$key $fromSeqNr-$toSeqNr ${d.data}" }.mkString(", "))
+            deltas.collect { case (key, Delta(_, fromSeqNr, toSeqNr)) ⇒ s"$key $fromSeqNr-$toSeqNr" }.mkString(", "))
 
         if (isNodeRemoved(fromNode, deltas.keys)) {
           // Late message from a removed node.
@@ -1579,9 +1577,7 @@ final class Replicator(settings: ReplicatorSettings) extends Actor with ActorLog
 
   def receiveGossip(updatedData: Map[String, DataEnvelope], sendBack: Boolean): Unit = {
     if (log.isDebugEnabled)
-      // FIXME log.debug("Received gossip from [{}], containing [{}]", replyTo.path.address, updatedData.keys.mkString(", "))
-      log.debug("Received gossip from [{}], containing [{}]", replyTo.path.address,
-        updatedData.map { case (key, d) ⇒ s"$key -> ${d.deltaVersions}" }.mkString(", "))
+      log.debug("Received gossip from [{}], containing [{}]", replyTo.path.address, updatedData.keys.mkString(", "))
     var replyData = Map.empty[String, DataEnvelope]
     updatedData.foreach {
       case (key, envelope) ⇒

@@ -35,6 +35,7 @@ message ORSetDeltaGroup {
 enum ORSetDeltaOp {
   Add = 0;
   Remove = 1;
+  Full = 2;
 }
 
 message Flag {

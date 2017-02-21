@@ -332,6 +332,30 @@ class ORSetSpec extends WordSpec with Matchers {
       s6.mergeDelta(s3.delta.get).elements should ===(Set("a", "b", "c"))
     }
 
+    "work for clear" in {
+      val s1 = ORSet.empty[String]
+      val s2 = s1.add(node1, "a").add(node1, "b")
+      val s3 = s2.resetDelta.clear(node1)
+      val s4 = s3.resetDelta.add(node1, "c")
+      s2.merge(s3) should ===(s3)
+      s2.mergeDelta(s3.delta.get) should ===(s3)
+      val s5 = s2.mergeDelta(s3.delta.get).mergeDelta(s4.delta.get)
+      s5.elements should ===(Set("c"))
+      s5 should ===(s4)
+
+      // concurrent update
+      val s6 = s2.resetDelta.add(node2, "d")
+      val s7 = s6.merge(s3)
+      s7.elements should ===(Set("d"))
+      s6.mergeDelta(s3.delta.get) should ===(s7)
+
+      // add "b" again
+      val s8 = s7.add(node2, "b")
+      // merging the old delta should not remove it
+      s8.mergeDelta(s3.delta.get) should ===(s8)
+      s8.mergeDelta(s3.delta.get).elements should ===(Set("b", "d"))
+    }
+
     "handle a mixed add/remove scenario" in {
       val s1 = ORSet.empty[String]
       val s2 = s1.resetDelta.remove(node1, "e")

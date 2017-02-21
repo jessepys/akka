@@ -21,6 +21,10 @@ public final class ReplicatedDataMessages {
      * <code>Remove = 1;</code>
      */
     Remove(1, 1),
+    /**
+     * <code>Full = 2;</code>
+     */
+    Full(2, 2),
     ;
 
     /**
@@ -31,6 +35,10 @@ public final class ReplicatedDataMessages {
      * <code>Remove = 1;</code>
      */
     public static final int Remove_VALUE = 1;
+    /**
+     * <code>Full = 2;</code>
+     */
+    public static final int Full_VALUE = 2;
 
 
     public final int getNumber() { return value; }
@@ -39,6 +47,7 @@ public final class ReplicatedDataMessages {
       switch (value) {
         case 0: return Add;
         case 1: return Remove;
+        case 2: return Full;
         default: return null;
       }
     }
@@ -15563,9 +15572,9 @@ public final class ReplicatedDataMessages {
       "\001(\t\022(\n\005value\030\002 \002(\0132\031.akka.cluster.ddata." +
       "ORSet\022\016\n\006intKey\030\003 \001(\021\022\017\n\007longKey\030\004 \001(\022\0222" +
       "\n\010otherKey\030\005 \001(\0132 .akka.cluster.ddata.Ot" +
-      "herMessage*#\n\014ORSetDeltaOp\022\007\n\003Add\020\000\022\n\n\006R" +
-      "emove\020\001B#\n\037akka.cluster.ddata.protobuf.m" +
-      "sgH\001"
+      "herMessage*-\n\014ORSetDeltaOp\022\007\n\003Add\020\000\022\n\n\006R" +
+      "emove\020\001\022\010\n\004Full\020\002B#\n\037akka.cluster.ddata." +
+      "protobuf.msgH\001"
     };
     akka.protobuf.Descriptors.FileDescriptor.InternalDescriptorAssigner assigner =
       new akka.protobuf.Descriptors.FileDescriptor.InternalDescriptorAssigner() {

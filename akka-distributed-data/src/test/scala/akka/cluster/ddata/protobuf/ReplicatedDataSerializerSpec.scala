@@ -105,6 +105,8 @@ class ReplicatedDataSerializerSpec extends TestKit(ActorSystem(
       checkSerialization(ORSet().add(address1, "a").delta.get)
       checkSerialization(ORSet().add(address1, "a").resetDelta.remove(address2, "a").delta.get)
       checkSerialization(ORSet().add(address1, "a").remove(address2, "a").delta.get)
+      checkSerialization(ORSet().add(address1, "a").resetDelta.clear(address2).delta.get)
+      checkSerialization(ORSet().add(address1, "a").clear(address2).delta.get)
     }
 
     "serialize large GSet" in {
